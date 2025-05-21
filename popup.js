@@ -55,25 +55,31 @@ document.addEventListener('DOMContentLoaded', function () {
       source: 'cc',
       color: '#ffffff',
       background: '#000000',
-      opacity: 0.7
+      opacity: 0.7,
+      fontSize: 22
     },
     subtitle2: {
       source: 'subtitle1',
       color: '#ffffff',
       background: '#000000',
-      opacity: 0.7
+      opacity: 0.7,
+      fontSize: 22
     },
-    position: 25 // % from bottom
+    position: 25, // % from bottom
+    gap: 20 // pixels between subtitles
   }, function (items) {
     // Set values based on saved settings
     document.getElementById('subtitle1-color').value = items.subtitle1.color;
     document.getElementById('subtitle1-bg').value = items.subtitle1.background;
     document.getElementById('subtitle1-opacity').value = items.subtitle1.opacity;
+    document.getElementById('subtitle1-size').value = items.subtitle1.fontSize;
 
     document.getElementById('subtitle2-color').value = items.subtitle2.color;
     document.getElementById('subtitle2-bg').value = items.subtitle2.background;
     document.getElementById('subtitle2-opacity').value = items.subtitle2.opacity;
+    document.getElementById('subtitle2-size').value = items.subtitle2.fontSize;
 
+    document.getElementById('subtitle-gap').value = items.gap;
     document.getElementById('top-position').value = items.position;
 
     // Update button and status
@@ -99,15 +105,18 @@ document.addEventListener('DOMContentLoaded', function () {
         source: document.getElementById('subtitle1-source').value,
         color: document.getElementById('subtitle1-color').value,
         background: document.getElementById('subtitle1-bg').value,
-        opacity: parseFloat(document.getElementById('subtitle1-opacity').value)
+        opacity: parseFloat(document.getElementById('subtitle1-opacity').value),
+        fontSize: parseInt(document.getElementById('subtitle1-size').value)
       },
       subtitle2: {
         source: document.getElementById('subtitle2-source').value,
         color: document.getElementById('subtitle2-color').value,
         background: document.getElementById('subtitle2-bg').value,
-        opacity: parseFloat(document.getElementById('subtitle2-opacity').value)
+        opacity: parseFloat(document.getElementById('subtitle2-opacity').value),
+        fontSize: parseInt(document.getElementById('subtitle2-size').value)
       },
-      position: parseInt(document.getElementById('top-position').value)
+      position: parseInt(document.getElementById('top-position').value),
+      gap: parseInt(document.getElementById('subtitle-gap').value)
     };
 
     chrome.storage.sync.set(settings);
@@ -121,15 +130,69 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // Add event listeners for all settings fields
+  // add event listeners for all settings fields
   const settingsFields = [
-    'subtitle1-source', 'subtitle1-color', 'subtitle1-bg', 'subtitle1-opacity',
-    'subtitle2-source', 'subtitle2-color', 'subtitle2-bg', 'subtitle2-opacity',
-    'top-position'
+    'subtitle1-source', 'subtitle1-color', 'subtitle1-bg', 'subtitle1-opacity', 'subtitle1-size',
+    'subtitle2-source', 'subtitle2-color', 'subtitle2-bg', 'subtitle2-opacity', 'subtitle2-size',
+    'top-position', 'subtitle-gap'
   ];
 
   settingsFields.forEach(field => {
-    document.getElementById(field).addEventListener('change', saveSettings);
+    const element = document.getElementById(field);
+    if (element) {
+      // For number inputs and range inputs, use 'input' event for real-time updates
+      if (element.type === 'number' || element.type === 'range') {
+        element.addEventListener('input', saveSettings);
+      } else if (field.includes('source')) {
+        // For source selectors, toggle enabled state
+        element.addEventListener('change', () => {
+          const statusDiv = document.getElementById('status');
+          const isEnabled = statusDiv.classList.contains('enabled');
+
+          if (isEnabled) {
+            // Temporarily set enabled to false
+            const settings = {
+              enabled: false,
+              subtitle1: {
+                source: document.getElementById('subtitle1-source').value,
+                color: document.getElementById('subtitle1-color').value,
+                background: document.getElementById('subtitle1-bg').value,
+                opacity: parseFloat(document.getElementById('subtitle1-opacity').value),
+                fontSize: parseInt(document.getElementById('subtitle1-size').value)
+              },
+              subtitle2: {
+                source: document.getElementById('subtitle2-source').value,
+                color: document.getElementById('subtitle2-color').value,
+                background: document.getElementById('subtitle2-bg').value,
+                opacity: parseFloat(document.getElementById('subtitle2-opacity').value),
+                fontSize: parseInt(document.getElementById('subtitle2-size').value)
+              },
+              position: parseInt(document.getElementById('top-position').value)
+            };
+
+            // Send disable message
+            chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+              chrome.tabs.sendMessage(tabs[0].id, {
+                action: 'updateSettings',
+                settings: settings
+              }, () => {
+                // Immediately re-enable
+                settings.enabled = true;
+                chrome.tabs.sendMessage(tabs[0].id, {
+                  action: 'updateSettings',
+                  settings: settings
+                });
+              });
+            });
+          } else {
+            // If not enabled, just save the settings
+            saveSettings();
+          }
+        });
+      } else {
+        element.addEventListener('change', saveSettings);
+      }
+    }
   });
 
   // Toggle button action

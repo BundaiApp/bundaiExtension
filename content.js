@@ -7,15 +7,18 @@
       source: 'cc',
       color: '#ffffff',
       background: '#000000',
-      opacity: 0.7
+      opacity: 0.7,
+      fontSize: 18
     },
     subtitle2: {
       source: 'subtitle1',
       color: '#ffffff',
       background: '#000000',
-      opacity: 0.7
+      opacity: 0.7,
+      fontSize: 18
     },
-    position: 25 // % from bottom
+    position: 25, // % from bottom
+    gap: 20,
   };
 
   let subtitleContainer = null;
@@ -76,8 +79,22 @@
           updateSubtitleDisplay();
         }
 
+        updateSubtitleStyles(settings);
+
         sendResponse({ success: true });
-      } else if (message.action === 'getSubtitleTracks') {
+      } else if (message.action === 'updateTracks') {
+        log('Received track update', message.settings);
+        if (message.settings.subtitle1) {
+          settings.subtitle1.source = message.settings.subtitle1.source;
+        }
+        if (message.settings.subtitle2) {
+          settings.subtitle2.source = message.settings.subtitle2.source;
+        }
+        setupTextTracks(); // This will update the active tracks
+        updateSubtitleContent(); // This will update the display
+        sendResponse({ success: true });
+      }
+      else if (message.action === 'getSubtitleTracks') {
         // Send available subtitle tracks back to the popup
         detectAvailableTracks().then(() => {
           sendResponse({ tracks: availableTracks });
@@ -494,27 +511,29 @@
       subtitleContainer = document.createElement('div');
       subtitleContainer.className = 'dual-subtitles-container';
       subtitleContainer.style.cssText = `
-        position: fixed;
-        left: 50%;
-        bottom: ${settings.position}%;
-        transform: translateX(-50%);
-        z-index: 9999;
-        text-align: center;
-        pointer-events: none;
-        width: 100%;
-        max-width: 80%;
-      `;
+      position: fixed;
+      left: 50%;
+      bottom: ${settings.position}%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      text-align: center;
+      pointer-events: none;
+      width: 100%;
+      max-width: 80%;
+      display: flex;
+      flex-direction: column;
+      gap: ${settings.gap}px;
+    `;
       document.body.appendChild(subtitleContainer);
 
       // Create elements for each subtitle track
       subtitle1Element = document.createElement('div');
       subtitle1Element.className = 'subtitle-track subtitle-track-1';
       subtitle1Element.style.cssText = `
-        margin: 5px 0;
         padding: 5px 10px;
         border-radius: 4px;
         display: none;
-        font-size: 18px;
+        font-size: ${settings.subtitle1.fontSize}px;
         text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
       `;
       applySubtitleStyles(subtitle1Element, settings.subtitle1);
@@ -523,11 +542,10 @@
       subtitle2Element = document.createElement('div');
       subtitle2Element.className = 'subtitle-track subtitle-track-2';
       subtitle2Element.style.cssText = `
-        margin: 5px 0;
         padding: 5px 10px;
         border-radius: 4px;
         display: none;
-        font-size: 18px;
+        font-size: ${settings.subtitle2.fontSize}px;
         text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
       `;
       applySubtitleStyles(subtitle2Element, settings.subtitle2);
@@ -929,6 +947,7 @@
 
     // Update position
     subtitleContainer.style.bottom = `${settings.position}%`;
+    subtitleContainer.style.gap = `${settings.gap}px`;
 
     // Force refresh active tracks
     setupTextTracks();
@@ -975,6 +994,29 @@
     activeTextTracks = {};
 
     log('Subtitle display removed');
+  }
+
+  function updateSubtitleStyles(settings) {
+    const subtitle1 = document.querySelector('.subtitle-track-1');
+    const subtitle2 = document.querySelector('.subtitle-track-2');
+
+    if (subtitle1) {
+      subtitle1.style.color = settings.subtitle1.color;
+      subtitle1.style.backgroundColor = hexToRgba(settings.subtitle1.background, settings.subtitle1.opacity);
+      subtitle1.style.fontSize = `${settings.subtitle1.fontSize}px`;
+    }
+
+    if (subtitle2) {
+      subtitle2.style.color = settings.subtitle2.color;
+      subtitle2.style.backgroundColor = hexToRgba(settings.subtitle2.background, settings.subtitle2.opacity);
+      subtitle2.style.fontSize = `${settings.subtitle2.fontSize}px`;
+    }
+
+    // If source settings are included, update the tracks
+    if (settings.subtitle1 && settings.subtitle1.source) {
+      setupTextTracks();
+      updateSubtitleContent();
+    }
   }
 
   // Initialize when the content script is loaded
