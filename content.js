@@ -517,7 +517,7 @@
       transform: translateX(-50%);
       z-index: 9999;
       text-align: center;
-      pointer-events: none;
+      pointer-events: auto;
       width: 100%;
       max-width: 80%;
       display: flex;
@@ -525,6 +525,21 @@
       gap: ${settings.gap}px;
     `;
       document.body.appendChild(subtitleContainer);
+
+      // Add mouse events to container for video control
+      subtitleContainer.addEventListener('mouseenter', () => {
+        if (videoElement && !videoElement.paused) {
+          videoElement.pause();
+          console.log('Video paused');
+        }
+      });
+
+      subtitleContainer.addEventListener('mouseleave', () => {
+        if (videoElement && videoElement.paused) {
+          videoElement.play();
+          console.log('Video playing');
+        }
+      });
 
       // Create elements for each subtitle track
       subtitle1Element = document.createElement('div');
@@ -535,6 +550,9 @@
         display: none;
         font-size: ${settings.subtitle1.fontSize}px;
         text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        pointer-events: auto;
+        cursor: pointer;
+        background: rgba(0, 0, 0, 0.5);
       `;
       applySubtitleStyles(subtitle1Element, settings.subtitle1);
       subtitleContainer.appendChild(subtitle1Element);
@@ -547,6 +565,9 @@
         display: none;
         font-size: ${settings.subtitle2.fontSize}px;
         text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        pointer-events: auto;
+        cursor: pointer;
+        background: rgba(0, 0, 0, 0.5);
       `;
       applySubtitleStyles(subtitle2Element, settings.subtitle2);
       subtitleContainer.appendChild(subtitle2Element);
@@ -888,6 +909,11 @@
     updateSubtitleContent();
   }
 
+  // Clean word of special characters
+  function cleanWord(word) {
+    return word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]'"<>?]/g, '');
+  }
+
   // Update the content of the subtitle elements from text tracks
   function updateSubtitleContent() {
     if (!subtitle1Element || !subtitle2Element) return;
@@ -899,15 +925,28 @@
         if (hasCues) {
           const cue = activeTextTracks.track1.activeCues[0];
           if (cue.text) {
-            subtitle1Element.textContent = cue.text;
+            // Wrap each word in a span
+            const wrappedText = cue.text.split(/\s+/).map(word =>
+              `<span class="subtitle-word">${word}</span>`
+            ).join(' ');
+            subtitle1Element.innerHTML = wrappedText;
             subtitle1Element.style.display = 'inline-block';
-            log('Updated subtitle 1 text:', cue.text);
+
+            // Add hover listeners to each word
+            subtitle1Element.querySelectorAll('.subtitle-word').forEach(span => {
+              span.onmouseover = function () {
+                const cleanedWord = cleanWord(this.textContent);
+                if (cleanedWord) {  // Only log if there's something left after cleaning
+                  console.log(cleanedWord);
+                }
+              };
+            });
           }
         } else {
           subtitle1Element.style.display = 'none';
         }
       } catch (e) {
-        log('Error updating subtitle 1:', e);
+        console.error('Error updating subtitle 1:', e);
       }
     }
 
@@ -918,22 +957,46 @@
         if (hasCues) {
           const cue = activeTextTracks.track2.activeCues[0];
           if (cue.text) {
-            subtitle2Element.textContent = cue.text;
+            // Wrap each word in a span
+            const wrappedText = cue.text.split(/\s+/).map(word =>
+              `<span class="subtitle-word">${word}</span>`
+            ).join(' ');
+            subtitle2Element.innerHTML = wrappedText;
             subtitle2Element.style.display = 'inline-block';
-            log('Updated subtitle 2 text:', cue.text);
+
+            // Add hover listeners to each word
+            subtitle2Element.querySelectorAll('.subtitle-word').forEach(span => {
+              span.onmouseover = function () {
+                const cleanedWord = cleanWord(this.textContent);
+                if (cleanedWord) {  // Only log if there's something left after cleaning
+                  console.log(cleanedWord);
+                }
+              };
+            });
           }
         } else {
           subtitle2Element.style.display = 'none';
         }
       } catch (e) {
-        log('Error updating subtitle 2:', e);
+        console.error('Error updating subtitle 2:', e);
       }
     }
 
     // Check for cases where second subtitle is a copy of the first
     if (settings.subtitle2.source === 'subtitle1' && subtitle1Element.textContent) {
-      subtitle2Element.textContent = subtitle1Element.textContent;
+      const wrappedText = subtitle1Element.innerHTML;
+      subtitle2Element.innerHTML = wrappedText;
       subtitle2Element.style.display = 'inline-block';
+
+      // Add hover listeners to each word in subtitle 2
+      subtitle2Element.querySelectorAll('.subtitle-word').forEach(span => {
+        span.onmouseover = function () {
+          const cleanedWord = cleanWord(this.textContent);
+          if (cleanedWord) {  // Only log if there's something left after cleaning
+            console.log(cleanedWord);
+          }
+        };
+      });
     }
   }
 
@@ -1016,6 +1079,56 @@
     if (settings.subtitle1 && settings.subtitle1.source) {
       setupTextTracks();
       updateSubtitleContent();
+    }
+  }
+
+  // Handle hover events on subtitle elements
+  function handleSubtitleHover(event) {
+    console.log('Hover event triggered');
+    const text = event.target.textContent;
+    console.log('Subtitle text:', text);
+
+    const words = text.split(/\s+/);
+    console.log('Words in subtitle:', words);
+
+    const rect = event.target.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    console.log('Mouse position:', { x, y });
+    console.log('Element bounds:', rect);
+
+    const word = words.find(word => {
+      // Create a temporary span to measure word positions
+      const tempSpan = document.createElement('span');
+      tempSpan.style.visibility = 'hidden';
+      tempSpan.style.position = 'absolute';
+      tempSpan.style.font = window.getComputedStyle(event.target).font;
+      tempSpan.textContent = word;
+      document.body.appendChild(tempSpan);
+
+      const wordWidth = tempSpan.offsetWidth;
+      document.body.removeChild(tempSpan);
+
+      // Approximate word position based on character count
+      const charCount = text.substring(0, text.indexOf(word)).length;
+      const charWidth = rect.width / text.length;
+      const wordStartX = charCount * charWidth;
+
+      console.log('Checking word:', word, {
+        wordWidth,
+        charCount,
+        charWidth,
+        wordStartX,
+        isHovered: x >= wordStartX && x <= wordStartX + wordWidth
+      });
+
+      return x >= wordStartX && x <= wordStartX + wordWidth;
+    });
+
+    if (word) {
+      console.log('Hovered word:', word);
+    } else {
+      console.log('No word detected at hover position');
     }
   }
 
