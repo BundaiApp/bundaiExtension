@@ -66,7 +66,15 @@ document.addEventListener('DOMContentLoaded', function () {
       fontSize: 22
     },
     position: 25, // % from bottom
-    gap: 20 // pixels between subtitles
+    gap: 20, // pixels between subtitles
+    wordCard: {
+      backgroundColor: '#000000',
+      backgroundOpacity: 0.9,
+      textColor: '#ffffff',
+      borderRadius: 8,
+      padding: 16,
+      shadowIntensity: 12
+    }
   }, function (items) {
     // Set values based on saved settings
     document.getElementById('subtitle1-color').value = items.subtitle1.color;
@@ -81,6 +89,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
     document.getElementById('subtitle-gap').value = items.gap;
     document.getElementById('top-position').value = items.position;
+
+    // Set word card values
+    document.getElementById('card-bg').value = items.wordCard.backgroundColor;
+    document.getElementById('card-opacity').value = items.wordCard.backgroundOpacity;
+    document.getElementById('card-text-color').value = items.wordCard.textColor;
+    document.getElementById('card-border-radius').value = items.wordCard.borderRadius;
+    document.getElementById('card-padding').value = items.wordCard.padding;
+    document.getElementById('card-shadow').value = items.wordCard.shadowIntensity;
 
     // Update button and status
     const toggleButton = document.getElementById('toggle-subtitles');
@@ -116,7 +132,15 @@ document.addEventListener('DOMContentLoaded', function () {
         fontSize: parseInt(document.getElementById('subtitle2-size').value)
       },
       position: parseInt(document.getElementById('top-position').value),
-      gap: parseInt(document.getElementById('subtitle-gap').value)
+      gap: parseInt(document.getElementById('subtitle-gap').value),
+      wordCard: {
+        backgroundColor: document.getElementById('card-bg').value,
+        backgroundOpacity: parseFloat(document.getElementById('card-opacity').value),
+        textColor: document.getElementById('card-text-color').value,
+        borderRadius: parseInt(document.getElementById('card-border-radius').value),
+        padding: parseInt(document.getElementById('card-padding').value),
+        shadowIntensity: parseInt(document.getElementById('card-shadow').value)
+      }
     };
 
     chrome.storage.sync.set(settings);
@@ -134,7 +158,8 @@ document.addEventListener('DOMContentLoaded', function () {
   const settingsFields = [
     'subtitle1-source', 'subtitle1-color', 'subtitle1-bg', 'subtitle1-opacity', 'subtitle1-size',
     'subtitle2-source', 'subtitle2-color', 'subtitle2-bg', 'subtitle2-opacity', 'subtitle2-size',
-    'top-position', 'subtitle-gap'
+    'top-position', 'subtitle-gap',
+    'card-bg', 'card-opacity', 'card-text-color', 'card-border-radius', 'card-padding', 'card-shadow'
   ];
 
   settingsFields.forEach(field => {

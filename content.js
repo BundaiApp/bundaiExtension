@@ -19,6 +19,14 @@
     },
     position: 25, // % from bottom
     gap: 20,
+    wordCard: {
+      backgroundColor: '#000000',
+      backgroundOpacity: 0.9,
+      textColor: '#ffffff',
+      borderRadius: 8,
+      padding: 16,
+      shadowIntensity: 12
+    }
   };
 
   let subtitleContainer = null;
@@ -983,17 +991,17 @@
     card.className = 'floating-word-card';
     card.style.cssText = `
       position: fixed;
-      background: rgba(0, 0, 0, 0.9);
-      color: white;
+      background: ${hexToRgba(settings.wordCard.backgroundColor, settings.wordCard.backgroundOpacity)};
+      color: ${settings.wordCard.textColor};
       min-width: 200px;
-      padding: 16px;
-      border-radius: 8px;
+      padding: ${settings.wordCard.padding}px;
+      border-radius: ${settings.wordCard.borderRadius}px;
       font-size: 18px;
       z-index: 10000;
       opacity: 0;
       transform: translateY(10px);
       transition: opacity 0.2s ease, transform 0.2s ease;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 4px ${settings.wordCard.shadowIntensity}px rgba(0, 0, 0, 0.3);
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -1022,7 +1030,7 @@
     closeButton.style.cssText = `
       background: none;
       border: none;
-      color: white;
+      color: ${settings.wordCard.textColor};
       font-size: 24px;
       cursor: pointer;
       padding: 0 8px;
@@ -1169,6 +1177,21 @@
     // Update position
     subtitleContainer.style.bottom = `${settings.position}%`;
     subtitleContainer.style.gap = `${settings.gap}px`;
+
+    // Update word card if it exists
+    if (window.wordCard) {
+      window.wordCard.style.background = hexToRgba(settings.wordCard.backgroundColor, settings.wordCard.backgroundOpacity);
+      window.wordCard.style.color = settings.wordCard.textColor;
+      window.wordCard.style.borderRadius = `${settings.wordCard.borderRadius}px`;
+      window.wordCard.style.padding = `${settings.wordCard.padding}px`;
+      window.wordCard.style.boxShadow = `0 4px ${settings.wordCard.shadowIntensity}px rgba(0, 0, 0, 0.3)`;
+
+      // Update close button color
+      const closeButton = window.wordCard.querySelector('button');
+      if (closeButton) {
+        closeButton.style.color = settings.wordCard.textColor;
+      }
+    }
 
     // Force refresh active tracks
     setupTextTracks();
