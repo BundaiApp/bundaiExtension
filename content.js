@@ -534,6 +534,7 @@
         }
       });
 
+      // play video when mouse leaves container
       subtitleContainer.addEventListener('mouseleave', () => {
         if (videoElement && videoElement.paused) {
           videoElement.play();
@@ -914,6 +915,142 @@
     return word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]'"<>?]/g, '');
   }
 
+  // Show the word card
+  function showWordCard(word, x, y, shouldStay = false) {
+    if (!window.wordCard) {
+      window.wordCard = createWordCard();
+    }
+
+    // Update word
+    const wordContainer = window.wordCard.querySelector('.word-container');
+    wordContainer.textContent = word;
+
+    // Position the card
+    const cardRect = window.wordCard.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Calculate position to keep card in viewport
+    let left = x + 20;
+    let top = y - cardRect.height - 20;
+
+    // Adjust if card would go off right edge
+    if (left + cardRect.width > viewportWidth) {
+      left = x - cardRect.width - 20;
+    }
+
+    // Adjust if card would go off top edge
+    if (top < 0) {
+      top = y + 20;
+    }
+
+    window.wordCard.style.left = `${left}px`;
+    window.wordCard.style.top = `${top}px`;
+    window.wordCard.style.opacity = '1';
+    window.wordCard.style.transform = 'translateY(0)';
+
+    // If shouldStay is true, set the stay flag
+    if (shouldStay) {
+      window.wordCard.dataset.stay = 'true';
+    } else {
+      window.wordCard.dataset.stay = 'false';
+    }
+  }
+
+  // Hide the word card
+  function hideWordCard() {
+    if (window.wordCard) {
+      // Only hide if the card is not set to stay
+      if (window.wordCard.dataset.stay !== 'true') {
+        window.wordCard.style.opacity = '0';
+        window.wordCard.style.transform = 'translateY(10px)';
+      }
+    }
+  }
+
+  // Close the word card
+  function closeWordCard() {
+    if (window.wordCard) {
+      window.wordCard.dataset.stay = 'false';
+      window.wordCard.style.opacity = '0';
+      window.wordCard.style.transform = 'translateY(10px)';
+    }
+  }
+
+  // Create and manage the floating word card
+  function createWordCard() {
+    const card = document.createElement('div');
+    card.className = 'floating-word-card';
+    card.style.cssText = `
+      position: fixed;
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      min-width: 200px;
+      padding: 16px;
+      border-radius: 8px;
+      font-size: 18px;
+      z-index: 10000;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    `;
+
+    // Create header with close button
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    `;
+
+    // Create word container
+    const wordContainer = document.createElement('div');
+    wordContainer.className = 'word-container';
+    wordContainer.style.cssText = `
+      font-size: 24px;
+      font-weight: bold;
+    `;
+
+    // Create close button
+    const closeButton = document.createElement('button');
+    closeButton.innerHTML = '×';
+    closeButton.style.cssText = `
+      background: none;
+      border: none;
+      color: white;
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0 8px;
+      opacity: 0.7;
+      transition: opacity 0.2s ease;
+    `;
+    closeButton.onmouseover = () => closeButton.style.opacity = '1';
+    closeButton.onmouseout = () => closeButton.style.opacity = '0.7';
+    closeButton.onclick = closeWordCard;
+
+    header.appendChild(wordContainer);
+    header.appendChild(closeButton);
+    card.appendChild(header);
+
+    // Create content container for additional elements
+    const contentContainer = document.createElement('div');
+    contentContainer.className = 'content-container';
+    contentContainer.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    `;
+    card.appendChild(contentContainer);
+
+    document.body.appendChild(card);
+    return card;
+  }
+
   // Update the content of the subtitle elements from text tracks
   function updateSubtitleContent() {
     if (!subtitle1Element || !subtitle2Element) return;
@@ -932,12 +1069,19 @@
             subtitle1Element.innerHTML = wrappedText;
             subtitle1Element.style.display = 'inline-block';
 
-            // Add hover listeners to each word
+            // Add hover and click listeners to each word
             subtitle1Element.querySelectorAll('.subtitle-word').forEach(span => {
-              span.onmouseover = function () {
+              span.onmouseover = function (event) {
                 const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {  // Only log if there's something left after cleaning
-                  console.log(cleanedWord);
+                if (cleanedWord) {
+                  showWordCard(cleanedWord, event.clientX, event.clientY);
+                }
+              };
+              span.onmouseout = hideWordCard;
+              span.onclick = function (event) {
+                const cleanedWord = cleanWord(this.textContent);
+                if (cleanedWord) {
+                  showWordCard(cleanedWord, event.clientX, event.clientY, true);
                 }
               };
             });
@@ -964,12 +1108,19 @@
             subtitle2Element.innerHTML = wrappedText;
             subtitle2Element.style.display = 'inline-block';
 
-            // Add hover listeners to each word
+            // Add hover and click listeners to each word
             subtitle2Element.querySelectorAll('.subtitle-word').forEach(span => {
-              span.onmouseover = function () {
+              span.onmouseover = function (event) {
                 const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {  // Only log if there's something left after cleaning
-                  console.log(cleanedWord);
+                if (cleanedWord) {
+                  showWordCard(cleanedWord, event.clientX, event.clientY);
+                }
+              };
+              span.onmouseout = hideWordCard;
+              span.onclick = function (event) {
+                const cleanedWord = cleanWord(this.textContent);
+                if (cleanedWord) {
+                  showWordCard(cleanedWord, event.clientX, event.clientY, true);
                 }
               };
             });
@@ -988,12 +1139,19 @@
       subtitle2Element.innerHTML = wrappedText;
       subtitle2Element.style.display = 'inline-block';
 
-      // Add hover listeners to each word in subtitle 2
+      // Add hover and click listeners to each word in subtitle 2
       subtitle2Element.querySelectorAll('.subtitle-word').forEach(span => {
-        span.onmouseover = function () {
+        span.onmouseover = function (event) {
           const cleanedWord = cleanWord(this.textContent);
-          if (cleanedWord) {  // Only log if there's something left after cleaning
-            console.log(cleanedWord);
+          if (cleanedWord) {
+            showWordCard(cleanedWord, event.clientX, event.clientY);
+          }
+        };
+        span.onmouseout = hideWordCard;
+        span.onclick = function (event) {
+          const cleanedWord = cleanWord(this.textContent);
+          if (cleanedWord) {
+            showWordCard(cleanedWord, event.clientX, event.clientY, true);
           }
         };
       });
