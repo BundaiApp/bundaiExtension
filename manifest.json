@@ -25,6 +25,7 @@
                 "*://*.youtube.com/*"
             ],
             "js": [
+                "node_modules/kuromoji/build/kuromoji.js",
                 "content.js"
             ],
             "css": [
@@ -36,7 +37,8 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "getYtSubs.js"
+                "getYtSubs.js",
+                "node_modules/kuromoji/dict/*.dat.gz"
             ],
             "matches": [
                 "*://*.youtube.com/*"

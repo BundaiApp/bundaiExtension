@@ -42,6 +42,109 @@
   let availableTracks = [];
   let youtubeSubtitleTracks = [];
 
+  // Japanese text detection and tokenization
+  let kuromojiTokenizer = null;
+  let kuromojiInitializing = false;
+  let kuromojiInitializationError = null;
+
+  // Initialize Kuromoji tokenizer
+  async function initializeKuromoji() {
+    if (kuromojiTokenizer) return kuromojiTokenizer;
+    if (kuromojiInitializing) {
+      // Wait for initialization to complete
+      while (kuromojiInitializing) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (kuromojiInitializationError) {
+        throw kuromojiInitializationError;
+      }
+      return kuromojiTokenizer;
+    }
+
+    kuromojiInitializing = true;
+    kuromojiInitializationError = null;
+
+    try {
+      return new Promise((resolve, reject) => {
+        kuromoji.builder({ dicPath: chrome.runtime.getURL('node_modules/kuromoji/dict/') }).build((err, tokenizer) => {
+          kuromojiInitializing = false;
+          if (err) {
+            kuromojiInitializationError = err;
+            log('Error initializing Kuromoji', err);
+            reject(err);
+            return;
+          }
+          kuromojiTokenizer = tokenizer;
+          log('Kuromoji initialized successfully');
+          resolve(tokenizer);
+        });
+      });
+    } catch (error) {
+      kuromojiInitializing = false;
+      kuromojiInitializationError = error;
+      log('Error in Kuromoji initialization', error);
+      throw error;
+    }
+  }
+
+  // Check if text contains Japanese characters
+  function isJapaneseText(text) {
+    if (!text) return false;
+    const japanesePattern = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\u3000-\u303F]/;
+    return japanesePattern.test(text);
+  }
+
+  // Tokenize text based on language
+  async function tokenizeText(text) {
+    if (!text) return [];
+
+    try {
+      if (isJapaneseText(text)) {
+        if (!kuromojiTokenizer) {
+          await initializeKuromoji();
+        }
+
+        return new Promise((resolve) => {
+          try {
+            const tokens = kuromojiTokenizer.tokenize(text);
+            resolve(tokens.map(token => ({
+              word: token.surface_form,
+              reading: token.reading,
+              pos: token.pos,
+              baseForm: token.basic_form
+            })));
+          } catch (error) {
+            log('Error tokenizing Japanese text', error);
+            // Fallback to simple splitting if tokenization fails
+            resolve([{
+              word: text,
+              reading: null,
+              pos: null,
+              baseForm: null
+            }]);
+          }
+        });
+      } else {
+        // For non-Japanese text, use simple word splitting
+        return text.split(/\s+/).map(word => ({
+          word: cleanWord(word),
+          reading: null,
+          pos: null,
+          baseForm: null
+        }));
+      }
+    } catch (error) {
+      log('Error in tokenizeText', error);
+      // Return the original text as a single token if something goes wrong
+      return [{
+        word: text,
+        reading: null,
+        pos: null,
+        baseForm: null
+      }];
+    }
+  }
+
   // Logging helper function
   function log(message, data) {
     if (debugMode) {
@@ -208,7 +311,7 @@
       youtubeSubtitleTracks.forEach(track => {
         availableTracks.push({
           id: track.id,
-          label: `YouTube: ${track.name} (${track.languageCode})`
+          label: `${track.name} (${track.languageCode})`
         });
       });
 
@@ -519,19 +622,21 @@
       subtitleContainer = document.createElement('div');
       subtitleContainer.className = 'dual-subtitles-container';
       subtitleContainer.style.cssText = `
-      position: fixed;
-      left: 50%;
-      bottom: ${settings.position}%;
-      transform: translateX(-50%);
-      z-index: 9999;
-      text-align: center;
-      pointer-events: auto;
-      width: 100%;
-      max-width: 80%;
-      display: flex;
-      flex-direction: column;
-      gap: ${settings.gap}px;
-    `;
+        position: fixed;
+        left: 50%;
+        bottom: ${settings.position}%;
+        transform: translateX(-50%);
+        z-index: 9999;
+        text-align: center;
+        pointer-events: auto;
+        display: flex;
+        flex-direction: column;
+        gap: ${settings.gap}px;
+        max-width: 80%;
+        width: fit-content;
+        min-width: min-content;
+        background-color: rgba(255, 0, 0, 0.2); /* Debug background */
+      `;
       document.body.appendChild(subtitleContainer);
 
       // Add mouse events to container for video control
@@ -539,14 +644,6 @@
         if (videoElement && !videoElement.paused) {
           videoElement.pause();
           console.log('Video paused');
-        }
-      });
-
-      // play video when mouse leaves container
-      subtitleContainer.addEventListener('mouseleave', () => {
-        if (videoElement && videoElement.paused) {
-          videoElement.play();
-          console.log('Video playing');
         }
       });
 
@@ -562,6 +659,10 @@
         pointer-events: auto;
         cursor: pointer;
         background: rgba(0, 0, 0, 0.5);
+        white-space: nowrap;
+        width: fit-content;
+        margin: 0 auto;
+        background-color: rgba(0, 255, 0, 0.2); /* Debug background */
       `;
       applySubtitleStyles(subtitle1Element, settings.subtitle1);
       subtitleContainer.appendChild(subtitle1Element);
@@ -577,6 +678,10 @@
         pointer-events: auto;
         cursor: pointer;
         background: rgba(0, 0, 0, 0.5);
+        white-space: nowrap;
+        width: fit-content;
+        margin: 0 auto;
+        background-color: rgba(0, 0, 255, 0.2); /* Debug background */
       `;
       applySubtitleStyles(subtitle2Element, settings.subtitle2);
       subtitleContainer.appendChild(subtitle2Element);
@@ -924,21 +1029,20 @@
   }
 
   // Show the word card
-  function showWordCard(word, x, y, shouldStay = false) {
-    if (!window.wordCard) {
-      window.wordCard = createWordCard();
-    }
+  async function showWordCard(word, x, y, shouldStay = false) {
+    if (!word) return;
 
-    // Update word
-    const wordContainer = window.wordCard.querySelector('.word-container');
-    wordContainer.textContent = word;
+    // Tokenize the word/text
+    const tokens = await tokenizeText(word);
+    if (tokens.length === 0) return;
 
-    // Position the card
-    const cardRect = window.wordCard.getBoundingClientRect();
+    const card = createWordCard();
+
+    // Calculate position to keep card in viewport
+    const cardRect = card.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
 
-    // Calculate position to keep card in viewport
     let left = x + 20;
     let top = y - cardRect.height - 20;
 
@@ -952,115 +1056,155 @@
       top = y + 20;
     }
 
-    window.wordCard.style.left = `${left}px`;
-    window.wordCard.style.top = `${top}px`;
-    window.wordCard.style.opacity = '1';
-    window.wordCard.style.transform = 'translateY(0)';
+    // Position the card
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
 
-    // If shouldStay is true, set the stay flag
-    if (shouldStay) {
-      window.wordCard.dataset.stay = 'true';
-    } else {
-      window.wordCard.dataset.stay = 'false';
-    }
-  }
-
-  // Hide the word card
-  function hideWordCard() {
-    if (window.wordCard) {
-      // Only hide if the card is not set to stay
-      if (window.wordCard.dataset.stay !== 'true') {
-        window.wordCard.style.opacity = '0';
-        window.wordCard.style.transform = 'translateY(10px)';
-      }
-    }
-  }
-
-  // Close the word card
-  function closeWordCard() {
-    if (window.wordCard) {
-      window.wordCard.dataset.stay = 'false';
-      window.wordCard.style.opacity = '0';
-      window.wordCard.style.transform = 'translateY(10px)';
-    }
-  }
-
-  // Create and manage the floating word card
-  function createWordCard() {
-    const card = document.createElement('div');
-    card.className = 'floating-word-card';
-    card.style.cssText = `
-      position: fixed;
-      background: ${hexToRgba(settings.wordCard.backgroundColor, settings.wordCard.backgroundOpacity)};
-      color: ${settings.wordCard.textColor};
-      min-width: 200px;
-      padding: ${settings.wordCard.padding}px;
-      border-radius: ${settings.wordCard.borderRadius}px;
-      font-size: 18px;
-      z-index: 10000;
-      opacity: 0;
-      transform: translateY(10px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      box-shadow: 0 4px ${settings.wordCard.shadowIntensity}px rgba(0, 0, 0, 0.3);
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    `;
-
-    // Create header with close button
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    `;
-
-    // Create word container
-    const wordContainer = document.createElement('div');
-    wordContainer.className = 'word-container';
-    wordContainer.style.cssText = `
-      font-size: 24px;
-      font-weight: bold;
-    `;
-
-    // Create close button
-    const closeButton = document.createElement('button');
-    closeButton.innerHTML = '×';
-    closeButton.style.cssText = `
-      background: none;
-      border: none;
-      color: ${settings.wordCard.textColor};
-      font-size: 24px;
-      cursor: pointer;
-      padding: 0 8px;
-      opacity: 0.7;
-      transition: opacity 0.2s ease;
-    `;
-    closeButton.onmouseover = () => closeButton.style.opacity = '1';
-    closeButton.onmouseout = () => closeButton.style.opacity = '0.7';
-    closeButton.onclick = closeWordCard;
-
-    header.appendChild(wordContainer);
-    header.appendChild(closeButton);
-    card.appendChild(header);
-
-    // Create content container for additional elements
-    const contentContainer = document.createElement('div');
+    // Create content container
+    const contentContainer = card.querySelector('.content-container') || document.createElement('div');
     contentContainer.className = 'content-container';
     contentContainer.style.cssText = `
       display: flex;
       flex-direction: column;
       gap: 8px;
     `;
-    card.appendChild(contentContainer);
 
-    document.body.appendChild(card);
+    // Clear previous content
+    contentContainer.innerHTML = '';
+
+    // Add the token to the card (now we only show one token)
+    const token = tokens[0];
+    const tokenContainer = document.createElement('div');
+    tokenContainer.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    `;
+
+    const wordElement = document.createElement('div');
+    wordElement.className = 'word';
+    wordElement.style.fontWeight = 'bold';
+    wordElement.textContent = token.word;
+
+    tokenContainer.appendChild(wordElement);
+
+    if (token.reading) {
+      const readingElement = document.createElement('div');
+      readingElement.className = 'reading';
+      readingElement.style.cssText = `
+        font-size: 0.9em;
+        color: #888;
+      `;
+      readingElement.textContent = token.reading;
+      tokenContainer.appendChild(readingElement);
+    }
+
+    contentContainer.appendChild(tokenContainer);
+
+    // Add content container to card if not already present
+    if (!card.querySelector('.content-container')) {
+      card.appendChild(contentContainer);
+    }
+
+    // Show the card with animation
+    card.style.display = 'block';
+    card.style.opacity = '0';
+    card.style.transform = 'translateY(10px)';
+
+    // Force reflow
+    card.offsetHeight;
+
+    card.style.opacity = '1';
+    card.style.transform = 'translateY(0)';
+
+    // Set stay flag
+    card.dataset.stay = shouldStay ? 'true' : 'false';
+  }
+
+  // Hide the word card
+  function hideWordCard() {
+    const card = document.querySelector('.word-card');
+    if (card) {
+      // Only hide if the card is not set to stay
+      if (card.dataset.stay !== 'true') {
+        card.style.opacity = '0';
+        card.style.transform = 'translateY(10px)';
+      }
+    }
+  }
+
+  // Close the word card
+  function closeWordCard() {
+    const card = document.querySelector('.word-card');
+    if (card) {
+      card.dataset.stay = 'false';
+      card.style.opacity = '0';
+      card.style.transform = 'translateY(10px)';
+    }
+  }
+
+  // Create and manage the floating word card
+  function createWordCard() {
+    let card = document.querySelector('.word-card');
+
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'word-card';
+      card.style.cssText = `
+        position: fixed;
+        z-index: 99999;
+        background: ${hexToRgba(settings.wordCard.backgroundColor, settings.wordCard.backgroundOpacity)};
+        color: ${settings.wordCard.textColor};
+        border-radius: ${settings.wordCard.borderRadius}px;
+        padding: ${settings.wordCard.padding}px;
+        box-shadow: 0 4px ${settings.wordCard.shadowIntensity}px rgba(0, 0, 0, 0.3);
+        min-width: 200px;
+        max-width: 300px;
+        font-size: 16px;
+        line-height: 1.4;
+        opacity: 0;
+        transform: translateY(10px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        display: none;
+      `;
+
+      // Create header with close button
+      const header = document.createElement('div');
+      header.style.cssText = `
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      `;
+
+      // Create close button
+      const closeButton = document.createElement('button');
+      closeButton.innerHTML = '×';
+      closeButton.style.cssText = `
+        background: none;
+        border: none;
+        color: ${settings.wordCard.textColor};
+        font-size: 24px;
+        cursor: pointer;
+        padding: 0 8px;
+        opacity: 0.7;
+        transition: opacity 0.2s ease;
+      `;
+      closeButton.onmouseover = () => closeButton.style.opacity = '1';
+      closeButton.onmouseout = () => closeButton.style.opacity = '0.7';
+      closeButton.onclick = closeWordCard;
+
+      header.appendChild(closeButton);
+      card.appendChild(header);
+
+      document.body.appendChild(card);
+    }
+
     return card;
   }
 
   // Update the content of the subtitle elements from text tracks
-  function updateSubtitleContent() {
+  async function updateSubtitleContent() {
     if (!subtitle1Element || !subtitle2Element) return;
 
     // Update subtitle 1
@@ -1070,26 +1214,48 @@
         if (hasCues) {
           const cue = activeTextTracks.track1.activeCues[0];
           if (cue.text) {
-            // Wrap each word in a span
-            const wrappedText = cue.text.split(/\s+/).map(word =>
-              `<span class="subtitle-word">${word}</span>`
-            ).join(' ');
-            subtitle1Element.innerHTML = wrappedText;
-            subtitle1Element.style.display = 'inline-block';
+            log('Processing subtitle text:', cue.text);
+
+            // Check if the text is Japanese
+            if (isJapaneseText(cue.text)) {
+              log('Detected Japanese text');
+              // For Japanese text, we'll tokenize and wrap each token
+              const tokens = await tokenizeText(cue.text);
+              log('Tokenized Japanese text:', tokens);
+
+              const wrappedText = tokens.map(token =>
+                `<span class="subtitle-word" data-reading="${token.reading || ''}">${token.word}</span>`
+              ).join('');
+              subtitle1Element.innerHTML = wrappedText;
+              subtitle1Element.style.display = 'inline-block';
+            } else {
+              // For non-Japanese text, use simple word splitting
+              const wrappedText = cue.text.split(/\s+/).map(word =>
+                `<span class="subtitle-word">${word}</span>`
+              ).join(' ');
+              subtitle1Element.innerHTML = wrappedText;
+              subtitle1Element.style.display = 'inline-block';
+            }
 
             // Add hover and click listeners to each word
             subtitle1Element.querySelectorAll('.subtitle-word').forEach(span => {
               span.onmouseover = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY);
+                log('Mouse over word:', this.textContent);
+                const word = this.textContent;
+                if (word) {
+                  showWordCard(word, event.clientX, event.clientY);
                 }
               };
-              span.onmouseout = hideWordCard;
+              span.onmouseout = function () {
+                const card = document.querySelector('.word-card');
+                if (card && card.dataset.stay !== 'true') {
+                  hideWordCard();
+                }
+              };
               span.onclick = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY, true);
+                const word = this.textContent;
+                if (word) {
+                  showWordCard(word, event.clientX, event.clientY, true);
                 }
               };
             });
@@ -1109,26 +1275,48 @@
         if (hasCues) {
           const cue = activeTextTracks.track2.activeCues[0];
           if (cue.text) {
-            // Wrap each word in a span
-            const wrappedText = cue.text.split(/\s+/).map(word =>
-              `<span class="subtitle-word">${word}</span>`
-            ).join(' ');
-            subtitle2Element.innerHTML = wrappedText;
-            subtitle2Element.style.display = 'inline-block';
+            log('Processing subtitle text:', cue.text);
+
+            // Check if the text is Japanese
+            if (isJapaneseText(cue.text)) {
+              log('Detected Japanese text');
+              // For Japanese text, we'll tokenize and wrap each token
+              const tokens = await tokenizeText(cue.text);
+              log('Tokenized Japanese text:', tokens);
+
+              const wrappedText = tokens.map(token =>
+                `<span class="subtitle-word" data-reading="${token.reading || ''}">${token.word}</span>`
+              ).join('');
+              subtitle2Element.innerHTML = wrappedText;
+              subtitle2Element.style.display = 'inline-block';
+            } else {
+              // For non-Japanese text, use simple word splitting
+              const wrappedText = cue.text.split(/\s+/).map(word =>
+                `<span class="subtitle-word">${word}</span>`
+              ).join(' ');
+              subtitle2Element.innerHTML = wrappedText;
+              subtitle2Element.style.display = 'inline-block';
+            }
 
             // Add hover and click listeners to each word
             subtitle2Element.querySelectorAll('.subtitle-word').forEach(span => {
               span.onmouseover = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY);
+                log('Mouse over word:', this.textContent);
+                const word = this.textContent;
+                if (word) {
+                  showWordCard(word, event.clientX, event.clientY);
                 }
               };
-              span.onmouseout = hideWordCard;
+              span.onmouseout = function () {
+                const card = document.querySelector('.word-card');
+                if (card && card.dataset.stay !== 'true') {
+                  hideWordCard();
+                }
+              };
               span.onclick = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY, true);
+                const word = this.textContent;
+                if (word) {
+                  showWordCard(word, event.clientX, event.clientY, true);
                 }
               };
             });
@@ -1265,52 +1453,15 @@
 
   // Handle hover events on subtitle elements
   function handleSubtitleHover(event) {
-    console.log('Hover event triggered');
-    const text = event.target.textContent;
-    console.log('Subtitle text:', text);
+    const text = event.target.textContent.trim();
+    if (!text) return;
 
-    const words = text.split(/\s+/);
-    console.log('Words in subtitle:', words);
+    // Get mouse position
+    const x = event.clientX;
+    const y = event.clientY;
 
-    const rect = event.target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    console.log('Mouse position:', { x, y });
-    console.log('Element bounds:', rect);
-
-    const word = words.find(word => {
-      // Create a temporary span to measure word positions
-      const tempSpan = document.createElement('span');
-      tempSpan.style.visibility = 'hidden';
-      tempSpan.style.position = 'absolute';
-      tempSpan.style.font = window.getComputedStyle(event.target).font;
-      tempSpan.textContent = word;
-      document.body.appendChild(tempSpan);
-
-      const wordWidth = tempSpan.offsetWidth;
-      document.body.removeChild(tempSpan);
-
-      // Approximate word position based on character count
-      const charCount = text.substring(0, text.indexOf(word)).length;
-      const charWidth = rect.width / text.length;
-      const wordStartX = charCount * charWidth;
-
-      console.log('Checking word:', word, {
-        wordWidth,
-        charCount,
-        charWidth,
-        wordStartX,
-        isHovered: x >= wordStartX && x <= wordStartX + wordWidth
-      });
-
-      return x >= wordStartX && x <= wordStartX + wordWidth;
-    });
-
-    if (word) {
-      console.log('Hovered word:', word);
-    } else {
-      console.log('No word detected at hover position');
-    }
+    // Show word card with the text
+    showWordCard(text, x, y);
   }
 
   // Initialize when the content script is loaded
