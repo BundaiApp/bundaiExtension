@@ -26,7 +26,8 @@
             ],
             "js": [
                 "node_modules/kuromoji/build/kuromoji.js",
-                "content.js"
+                "content.js",
+                "data/japanese/kanjiLookup.js"
             ],
             "css": [
                 "styles.css"

@@ -659,8 +659,6 @@
         pointer-events: auto;
         cursor: pointer;
         background: rgba(0, 0, 0, 0.5);
-        white-space: nowrap;
-        width: fit-content;
         margin: 0 auto;
         background-color: rgba(0, 255, 0, 0.2); /* Debug background */
       `;
@@ -678,8 +676,6 @@
         pointer-events: auto;
         cursor: pointer;
         background: rgba(0, 0, 0, 0.5);
-        white-space: nowrap;
-        width: fit-content;
         margin: 0 auto;
         background-color: rgba(0, 0, 255, 0.2); /* Debug background */
       `;
@@ -1087,6 +1083,32 @@
     wordElement.textContent = token.word;
 
     tokenContainer.appendChild(wordElement);
+
+    // token.word is the kanji you want to look up
+    const kanjiEntry = window.kanjiLookup.find(
+      entry => entry.kanjiName === token.word || entry.kanji === token.word || entry.kanjiname === token.word
+    );
+
+    if (kanjiEntry) {
+      // Show meanings (array or string)
+      const meaning = Array.isArray(kanjiEntry.meanings)
+        ? kanjiEntry.meanings.join('; ')
+        : kanjiEntry.meaning || '';
+      const jlpt = kanjiEntry.jlpt || kanjiEntry.jlptlevel || '';
+
+      // Add to your card
+      const meaningElement = document.createElement('div');
+      meaningElement.className = 'meaning';
+      meaningElement.textContent = `Meaning: ${meaning}`;
+      tokenContainer.appendChild(meaningElement);
+
+      if (jlpt) {
+        const jlptElement = document.createElement('div');
+        jlptElement.className = 'jlptlevel';
+        jlptElement.textContent = `JLPT: ${jlpt}`;
+        tokenContainer.appendChild(jlptElement);
+      }
+    }
 
     if (token.reading) {
       const readingElement = document.createElement('div');
