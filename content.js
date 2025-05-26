@@ -47,6 +47,23 @@
   let kuromojiInitializing = false;
   let kuromojiInitializationError = null;
 
+  // At the top-level of the IIFE, load mergedUniqueKanji.json using fetch
+  window.kanjiLookup = null;
+  window.kanjiLookupLoaded = false;
+
+  (async function loadKanjiLookup() {
+    try {
+      const response = await fetch(chrome.runtime.getURL('data/japanese/mergedUniqueKanji.json'));
+      window.kanjiLookup = await response.json();
+      window.kanjiLookupLoaded = true;
+      console.log('[Dual Subtitles] Kanji lookup loaded:', window.kanjiLookup.length, 'entries');
+    } catch (e) {
+      console.error('[Dual Subtitles] Failed to load kanji lookup:', e);
+      window.kanjiLookup = [];
+      window.kanjiLookupLoaded = true;
+    }
+  })();
+
   // Initialize Kuromoji tokenizer
   async function initializeKuromoji() {
     if (kuromojiTokenizer) return kuromojiTokenizer;
@@ -1028,6 +1045,15 @@
   async function showWordCard(word, x, y, shouldStay = false) {
     if (!word) return;
 
+    // Wait for kanjiLookup to be loaded if not already
+    if (!window.kanjiLookupLoaded) {
+      // Optionally show a loading indicator here
+      await new Promise(resolve => {
+        const check = () => window.kanjiLookupLoaded ? resolve() : setTimeout(check, 50);
+        check();
+      });
+    }
+
     // Tokenize the word/text
     const tokens = await tokenizeText(word);
     if (tokens.length === 0) return;
@@ -1077,48 +1103,45 @@
       gap: 4px;
     `;
 
+    // Show the main word at the top
     const wordElement = document.createElement('div');
     wordElement.className = 'word';
     wordElement.style.fontWeight = 'bold';
+    wordElement.style.fontSize = '1.2em';
     wordElement.textContent = token.word;
-
     tokenContainer.appendChild(wordElement);
 
     // token.word is the kanji you want to look up
-    const kanjiEntry = window.kanjiLookup.find(
-      entry => entry.kanjiName === token.word || entry.kanji === token.word || entry.kanjiname === token.word
+    const kanjiEntry = window.kanjiLookup && window.kanjiLookup.find(
+      entry => entry.kanjiName === token.word || entry.kanji === token.word || entry.reading === token.word
     );
 
     if (kanjiEntry) {
-      // Show meanings (array or string)
+      // Show meaning (array or string)
       const meaning = Array.isArray(kanjiEntry.meanings)
         ? kanjiEntry.meanings.join('; ')
         : kanjiEntry.meaning || '';
+      if (meaning) {
+        const meaningElement = document.createElement('div');
+        meaningElement.className = 'meaning';
+        meaningElement.textContent = `Meaning: ${meaning}`;
+        tokenContainer.appendChild(meaningElement);
+      }
+      // Show kanjiName
+      if (kanjiEntry.kanjiName) {
+        const kanjiNameElement = document.createElement('div');
+        kanjiNameElement.className = 'kanji-name';
+        kanjiNameElement.textContent = `kanjiName: ${kanjiEntry.kanjiName}`;
+        tokenContainer.appendChild(kanjiNameElement);
+      }
+      // Show JLPT level
       const jlpt = kanjiEntry.jlpt || kanjiEntry.jlptlevel || '';
-
-      // Add to your card
-      const meaningElement = document.createElement('div');
-      meaningElement.className = 'meaning';
-      meaningElement.textContent = `Meaning: ${meaning}`;
-      tokenContainer.appendChild(meaningElement);
-
       if (jlpt) {
         const jlptElement = document.createElement('div');
         jlptElement.className = 'jlptlevel';
         jlptElement.textContent = `JLPT: ${jlpt}`;
         tokenContainer.appendChild(jlptElement);
       }
-    }
-
-    if (token.reading) {
-      const readingElement = document.createElement('div');
-      readingElement.className = 'reading';
-      readingElement.style.cssText = `
-        font-size: 0.9em;
-        color: #888;
-      `;
-      readingElement.textContent = token.reading;
-      tokenContainer.appendChild(readingElement);
     }
 
     contentContainer.appendChild(tokenContainer);
@@ -1194,7 +1217,7 @@
       const header = document.createElement('div');
       header.style.cssText = `
         display: flex;
-        justify-content: space-between;
+        justify-content: flex-end;
         align-items: center;
         margin-bottom: 8px;
       `;
@@ -1203,17 +1226,30 @@
       const closeButton = document.createElement('button');
       closeButton.innerHTML = '×';
       closeButton.style.cssText = `
-        background: none;
+        background: rgba(0,0,0,0.25);
         border: none;
         color: ${settings.wordCard.textColor};
-        font-size: 24px;
+        font-size: 22px;
         cursor: pointer;
-        padding: 0 8px;
-        opacity: 0.7;
-        transition: opacity 0.2s ease;
+        padding: 4px 10px;
+        border-radius: 50%;
+        opacity: 0.8;
+        margin-left: auto;
+        transition: opacity 0.2s, background 0.2s;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+        outline: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       `;
-      closeButton.onmouseover = () => closeButton.style.opacity = '1';
-      closeButton.onmouseout = () => closeButton.style.opacity = '0.7';
+      closeButton.onmouseover = () => {
+        closeButton.style.opacity = '1';
+        closeButton.style.background = 'rgba(0,0,0,0.4)';
+      };
+      closeButton.onmouseout = () => {
+        closeButton.style.opacity = '0.8';
+        closeButton.style.background = 'rgba(0,0,0,0.25)';
+      };
       closeButton.onclick = closeWordCard;
 
       header.appendChild(closeButton);

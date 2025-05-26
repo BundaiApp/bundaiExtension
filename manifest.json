@@ -26,8 +26,7 @@
             ],
             "js": [
                 "node_modules/kuromoji/build/kuromoji.js",
-                "content.js",
-                "data/japanese/kanjiLookup.js"
+                "content.js"
             ],
             "css": [
                 "styles.css"
@@ -39,7 +38,8 @@
         {
             "resources": [
                 "getYtSubs.js",
-                "node_modules/kuromoji/dict/*.dat.gz"
+                "node_modules/kuromoji/dict/*.dat.gz",
+                "data/japanese/mergedUniqueKanji.json"
             ],
             "matches": [
                 "*://*.youtube.com/*"
