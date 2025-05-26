@@ -39,7 +39,8 @@
             "resources": [
                 "getYtSubs.js",
                 "node_modules/kuromoji/dict/*.dat.gz",
-                "data/japanese/mergedUniqueKanji.json"
+                "data/japanese/mergedUniqueKanji.json",
+                "data/japanese/jmdict-simplified-flat-full.json"
             ],
             "matches": [
                 "*://*.youtube.com/*"

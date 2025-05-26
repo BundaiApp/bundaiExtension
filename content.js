@@ -47,26 +47,26 @@
   let kuromojiInitializing = false;
   let kuromojiInitializationError = null;
 
-  // At the top-level of the IIFE, load mergedUniqueKanji.json using fetch
-  window.kanjiLookup = null;
-  window.kanjiLookupLoaded = false;
+  // At the top-level of the IIFE, load jmdict-simplified-flat-full.json using fetch
+  window.jmdictData = null;
+  window.jmdictLoaded = false;
 
-  (async function loadKanjiLookup() {
+  (async function loadJmdict() {
     try {
       const response = await fetch(
-        chrome.runtime.getURL("data/japanese/mergedUniqueKanji.json")
+        chrome.runtime.getURL("data/japanese/jmdict-simplified-flat-full.json")
       );
-      window.kanjiLookup = await response.json();
-      window.kanjiLookupLoaded = true;
+      window.jmdictData = await response.json();
+      window.jmdictLoaded = true;
       console.log(
-        "[Dual Subtitles] Kanji lookup loaded:",
-        window.kanjiLookup.length,
+        "[Dual Subtitles] JMdict loaded:",
+        window.jmdictData.length,
         "entries"
       );
     } catch (e) {
-      console.error("[Dual Subtitles] Failed to load kanji lookup:", e);
-      window.kanjiLookup = [];
-      window.kanjiLookupLoaded = true;
+      console.error("[Dual Subtitles] Failed to load JMdict:", e);
+      window.jmdictData = [];
+      window.jmdictLoaded = true;
     }
   })();
 
@@ -1110,16 +1110,23 @@
     return word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]'"<>?]/g, "");
   }
 
+  // Returns the first object whose kanji array includes the given kanji keyword
+  function findObjectByKanji(kanjiKeyword, data) {
+    return data.find(
+      (entry) =>
+        Array.isArray(entry.kanji) && entry.kanji.includes(kanjiKeyword)
+    );
+  }
+
   // Show the word card
   async function showWordCard(word, x, y, shouldStay = false) {
     if (!word) return;
 
-    // Wait for kanjiLookup to be loaded if not already
-    if (!window.kanjiLookupLoaded) {
-      // Optionally show a loading indicator here
+    // Wait for jmdict to be loaded if not already
+    if (!window.jmdictLoaded) {
       await new Promise((resolve) => {
         const check = () =>
-          window.kanjiLookupLoaded ? resolve() : setTimeout(check, 50);
+          window.jmdictLoaded ? resolve() : setTimeout(check, 50);
         check();
       });
     }
@@ -1182,41 +1189,31 @@
     wordElement.textContent = token.word;
     tokenContainer.appendChild(wordElement);
 
-    // token.word is the kanji you want to look up
-    const kanjiEntry =
-      window.kanjiLookup &&
-      window.kanjiLookup.find(
-        (entry) =>
-          entry.kanjiName === token.word ||
-          entry.kanji === token.word ||
-          entry.reading === token.word
-      );
+    // Lookup in JMdict
+    let entry = null;
+    if (window.jmdictData) {
+      entry = findObjectByKanji(token.word, window.jmdictData);
+    }
 
-    if (kanjiEntry) {
-      // Show meaning (array or string)
-      const meaning = Array.isArray(kanjiEntry.meanings)
-        ? kanjiEntry.meanings.join("; ")
-        : kanjiEntry.meaning || "";
-      if (meaning) {
-        const meaningElement = document.createElement("div");
-        meaningElement.className = "meaning";
-        meaningElement.textContent = `Meaning: ${meaning}`;
-        tokenContainer.appendChild(meaningElement);
+    if (entry) {
+      // Show kana (all readings)
+      if (Array.isArray(entry.kana) && entry.kana.length > 0) {
+        const kanaElement = document.createElement("div");
+        kanaElement.className = "kana";
+        kanaElement.textContent = `Kana: ${entry.kana.join(", ")}`;
+        tokenContainer.appendChild(kanaElement);
       }
-      // Show kanjiName
-      if (kanjiEntry.kanjiName) {
-        const kanjiNameElement = document.createElement("div");
-        kanjiNameElement.className = "kanji-name";
-        kanjiNameElement.textContent = `kanjiName: ${kanjiEntry.kanjiName}`;
-        tokenContainer.appendChild(kanjiNameElement);
-      }
-      // Show JLPT level
-      const jlpt = kanjiEntry.jlpt || kanjiEntry.jlptlevel || "";
-      if (jlpt) {
-        const jlptElement = document.createElement("div");
-        jlptElement.className = "jlptlevel";
-        jlptElement.textContent = `JLPT: ${jlpt}`;
-        tokenContainer.appendChild(jlptElement);
+      // Show meanings (gloss array from all senses)
+      if (Array.isArray(entry.senses) && entry.senses.length > 0) {
+        const glosses = entry.senses
+          .flatMap((sense) => sense.gloss)
+          .filter(Boolean);
+        if (glosses.length > 0) {
+          const meaningElement = document.createElement("div");
+          meaningElement.className = "meaning";
+          meaningElement.textContent = `Meaning: ${glosses.join("; ")}`;
+          tokenContainer.appendChild(meaningElement);
+        }
       }
     }
 
