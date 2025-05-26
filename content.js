@@ -1642,7 +1642,7 @@
       style.id = "subtitle-word-hover-style";
       style.textContent = `
         .subtitle-word:hover {
-          background-color: rgba(0,0,0,0.3) !important;
+          background-color: rgba(255,255,255,0.3) !important;
           border-radius: 4px;
           transition: background 0.15s;
         }
