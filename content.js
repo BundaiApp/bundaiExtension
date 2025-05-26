@@ -1339,79 +1339,96 @@
     return card;
   }
 
+  // Helper to check if a track is Japanese
+  function isJapaneseTrack(track) {
+    if (!track) return false;
+    // Check label and languageCode for Japanese
+    return (
+      /japanese|日本語|ja[-_]/i.test(track.label || "") ||
+      /ja[-_]/i.test(track.language || "")
+    );
+  }
+
   // Update the content of the subtitle elements from text tracks
   async function updateSubtitleContent() {
     if (!subtitle1Element || !subtitle2Element) return;
 
     // Update subtitle 1
     if (activeTextTracks.track1) {
-      try {
-        const hasCues =
-          activeTextTracks.track1.activeCues &&
-          activeTextTracks.track1.activeCues.length > 0;
-        if (hasCues) {
-          const cue = activeTextTracks.track1.activeCues[0];
-          if (cue.text) {
-            log("Processing subtitle text:", cue.text);
+      // Only show if Japanese
+      if (!isJapaneseTrack(activeTextTracks.track1)) {
+        subtitle1Element.style.display = "none";
+      } else {
+        try {
+          const hasCues =
+            activeTextTracks.track1.activeCues &&
+            activeTextTracks.track1.activeCues.length > 0;
+          if (hasCues) {
+            const cue = activeTextTracks.track1.activeCues[0];
+            if (cue.text) {
+              log("Processing subtitle text:", cue.text);
 
-            // Check if the text is Japanese
-            if (isJapaneseText(cue.text)) {
-              log("Detected Japanese text");
-              // For Japanese text, we'll tokenize and wrap each token
-              const tokens = await tokenizeText(cue.text);
-              log("Tokenized Japanese text:", tokens);
+              // Check if the text is Japanese
+              if (isJapaneseText(cue.text)) {
+                log("Detected Japanese text");
+                // For Japanese text, we'll tokenize and wrap each token
+                const tokens = await tokenizeText(cue.text);
+                log("Tokenized Japanese text:", tokens);
 
-              const wrappedText = tokens
-                .map(
-                  (token) =>
-                    `<span class="subtitle-word" data-reading="${
-                      token.reading || ""
-                    }">${token.word}</span>`
-                )
-                .join("");
-              subtitle1Element.innerHTML = wrappedText;
-              subtitle1Element.style.display = "inline-block";
-            } else {
-              // For non-Japanese text, use simple word splitting
-              const wrappedText = cue.text
-                .split(/\s+/)
-                .map((word) => `<span class="subtitle-word">${word}</span>`)
-                .join(" ");
-              subtitle1Element.innerHTML = wrappedText;
-              subtitle1Element.style.display = "inline-block";
+                const wrappedText = tokens
+                  .map(
+                    (token) =>
+                      `<span class="subtitle-word" data-reading="${
+                        token.reading || ""
+                      }">${token.word}</span>`
+                  )
+                  .join("");
+                subtitle1Element.innerHTML = wrappedText;
+                subtitle1Element.style.display = "inline-block";
+              } else {
+                // For non-Japanese text, use simple word splitting
+                const wrappedText = cue.text
+                  .split(/\s+/)
+                  .map((word) => `<span class="subtitle-word">${word}</span>`)
+                  .join(" ");
+                subtitle1Element.innerHTML = wrappedText;
+                subtitle1Element.style.display = "inline-block";
+              }
+
+              // Add hover and click listeners to each word
+              subtitle1Element
+                .querySelectorAll(".subtitle-word")
+                .forEach((span) => {
+                  span.onmouseover = function (event) {
+                    log("Mouse over word:", this.textContent);
+                    const word = this.textContent;
+                    if (word) {
+                      showWordCard(word, event.clientX, event.clientY);
+                    }
+                  };
+                  span.onmouseout = function () {
+                    const card = document.querySelector(".word-card");
+                    if (card && card.dataset.stay !== "true") {
+                      hideWordCard();
+                    }
+                  };
+                  span.onclick = function (event) {
+                    const word = this.textContent;
+                    if (word) {
+                      showWordCard(word, event.clientX, event.clientY, true);
+                    }
+                  };
+                });
             }
-
-            // Add hover and click listeners to each word
-            subtitle1Element
-              .querySelectorAll(".subtitle-word")
-              .forEach((span) => {
-                span.onmouseover = function (event) {
-                  log("Mouse over word:", this.textContent);
-                  const word = this.textContent;
-                  if (word) {
-                    showWordCard(word, event.clientX, event.clientY);
-                  }
-                };
-                span.onmouseout = function () {
-                  const card = document.querySelector(".word-card");
-                  if (card && card.dataset.stay !== "true") {
-                    hideWordCard();
-                  }
-                };
-                span.onclick = function (event) {
-                  const word = this.textContent;
-                  if (word) {
-                    showWordCard(word, event.clientX, event.clientY, true);
-                  }
-                };
-              });
+          } else {
+            subtitle1Element.style.display = "none";
           }
-        } else {
-          subtitle1Element.style.display = "none";
+        } catch (e) {
+          console.error("Error updating subtitle 1:", e);
         }
-      } catch (e) {
-        console.error("Error updating subtitle 1:", e);
       }
+    } else {
+      subtitle1Element.style.display = "none";
     }
 
     // Update subtitle 2

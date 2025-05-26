@@ -39,12 +39,13 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (isJapanese && !firstJapaneseValue) {
                   firstJapaneseValue = track.id;
                 }
-                if (isJapanese) {
-                  subtitle1Select.appendChild(option1);
-                }
+                // For subtitle1: add all options, but disable non-Japanese
+                option1.disabled = !isJapanese;
+                subtitle1Select.appendChild(option1);
 
+                // For subtitle2: all options enabled
                 const option2 = option1.cloneNode(true);
-                option2.disabled = false; // All options enabled for subtitle2
+                option2.disabled = false;
                 subtitle2Select.appendChild(option2);
               }
             });
@@ -55,8 +56,8 @@ document.addEventListener("DOMContentLoaded", function () {
             } else {
               subtitle1Select.value = "cc";
             }
-            // Disable the select so user cannot change it
-            subtitle1Select.disabled = true;
+            // Do NOT disable the select itself
+            subtitle1Select.disabled = false;
 
             // Restore selected value for subtitle2 if it exists
             chrome.storage.sync.get(["subtitle2"], function (items) {
