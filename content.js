@@ -50,6 +50,7 @@
   // At the top-level of the IIFE, load jmdict-simplified-flat-full.json using fetch
   window.jmdictData = null;
   window.jmdictIndex = null;
+  window.jmdictKanaIndex = null;
   window.jmdictLoaded = false;
 
   (async function loadJmdict() {
@@ -62,12 +63,21 @@
       // Create index for O(1) lookups
       console.log("[Dual Subtitles] Creating JMdict index...");
       window.jmdictIndex = {};
+      window.jmdictKanaIndex = {};
 
       window.jmdictData.forEach((entry) => {
         if (Array.isArray(entry.kanji)) {
           entry.kanji.forEach((kanji) => {
             // Store the entry directly in the index
             window.jmdictIndex[kanji] = entry;
+          });
+        }
+      });
+      window.jmdictData.forEach((entry) => {
+        if (Array.isArray(entry.kana)) {
+          entry.kana.forEach((kana) => {
+            // Store the entry directly in the kana index
+            window.jmdictKanaIndex[kana] = entry;
           });
         }
       });
@@ -1133,6 +1143,20 @@
     return window.jmdictIndex[kanjiKeyword];
   }
 
+  // function findObjectByKana(kanaKeyword) {
+  //   if (!window.jmdictData || !kanaKeyword) return null;
+
+  //   return window.jmdictData.find(entry => {
+  //     if (Array.isArray(entry.kana)) {
+  //       return entry.kana.some(kana => kana === kanaKeyword);
+  //     }
+  //     return false;
+  //   });
+  // }
+  function findObjectByKana(kanaKeyword) {
+    return window.jmdictKanaIndex[kanaKeyword] || null;
+  }
+
   // Show the word card
   async function showWordCard(word, x, y, shouldStay = false) {
     if (!word) return;
@@ -1207,16 +1231,53 @@
     // Lookup in JMdict
     let entry = null;
     if (window.jmdictData) {
-      entry = findObjectByKanji(token.word, window.jmdictData);
+      entry = findObjectByKanji(token.word);
+      if (!entry) {
+        entry = findObjectByKana(token.word);
+      }
+      if (!entry && token.reading) {
+        entry = findObjectByKana(token.reading);
+      }
     }
 
     if (entry) {
       // Show kana (all readings)
       if (Array.isArray(entry.kana) && entry.kana.length > 0) {
-        const kanaElement = document.createElement("div");
-        kanaElement.className = "kana";
-        kanaElement.textContent = `Kana: ${entry.kana.join(", ")}`;
-        tokenContainer.appendChild(kanaElement);
+        const kanaContainer = document.createElement("div");
+        kanaContainer.style.cssText = `
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          margin: 4px 0;
+        `;
+
+        const kanaLabel = document.createElement("span");
+        kanaLabel.textContent = "Kana: ";
+        kanaLabel.style.cssText = `
+          font-size: 0.9em;
+          color: ${settings.wordCard.textColor};
+          opacity: 0.8;
+          margin-right: 4px;
+          align-self: center;
+        `;
+        kanaContainer.appendChild(kanaLabel);
+
+        entry.kana.forEach((kana) => {
+          const kanaChip = document.createElement("span");
+          kanaChip.className = "kana-chip";
+          kanaChip.textContent = kana;
+          kanaChip.style.cssText = `
+            background: rgba(255, 255, 255, 0.15);
+            color: ${settings.wordCard.textColor};
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+          `;
+          kanaContainer.appendChild(kanaChip);
+        });
+
+        tokenContainer.appendChild(kanaContainer);
       }
       // Show meanings (gloss array from all senses)
       if (Array.isArray(entry.senses) && entry.senses.length > 0) {
@@ -1224,10 +1285,49 @@
           .flatMap((sense) => sense.gloss)
           .filter(Boolean);
         if (glosses.length > 0) {
-          const meaningElement = document.createElement("div");
-          meaningElement.className = "meaning";
-          meaningElement.textContent = `Meaning: ${glosses.join("; ")}`;
-          tokenContainer.appendChild(meaningElement);
+          const meaningContainer = document.createElement("div");
+          meaningContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 4px 0;
+          `;
+
+          const meaningLabel = document.createElement("span");
+          meaningLabel.textContent = "Meanings:";
+          meaningLabel.style.cssText = `
+            font-size: 0.9em;
+            color: ${settings.wordCard.textColor};
+            opacity: 0.8;
+            margin-bottom: 2px;
+          `;
+          meaningContainer.appendChild(meaningLabel);
+
+          const chipsContainer = document.createElement("div");
+          chipsContainer.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+          `;
+
+          glosses.forEach((gloss) => {
+            const meaningChip = document.createElement("span");
+            meaningChip.className = "meaning-chip";
+            meaningChip.textContent = gloss;
+            meaningChip.style.cssText = `
+              background: rgba(100, 149, 237, 0.3);
+              color: ${settings.wordCard.textColor};
+              padding: 3px 10px;
+              border-radius: 14px;
+              font-size: 0.8em;
+              border: 1px solid rgba(100, 149, 237, 0.4);
+              line-height: 1.2;
+            `;
+            chipsContainer.appendChild(meaningChip);
+          });
+
+          meaningContainer.appendChild(chipsContainer);
+          tokenContainer.appendChild(meaningContainer);
         }
       }
     }
