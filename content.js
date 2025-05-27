@@ -49,6 +49,7 @@
 
   // At the top-level of the IIFE, load jmdict-simplified-flat-full.json using fetch
   window.jmdictData = null;
+  window.jmdictIndex = null;
   window.jmdictLoaded = false;
 
   (async function loadJmdict() {
@@ -57,15 +58,32 @@
         chrome.runtime.getURL("data/japanese/jmdict-simplified-flat-full.json")
       );
       window.jmdictData = await response.json();
+
+      // Create index for O(1) lookups
+      console.log("[Dual Subtitles] Creating JMdict index...");
+      window.jmdictIndex = {};
+
+      window.jmdictData.forEach((entry) => {
+        if (Array.isArray(entry.kanji)) {
+          entry.kanji.forEach((kanji) => {
+            // Store the entry directly in the index
+            window.jmdictIndex[kanji] = entry;
+          });
+        }
+      });
+
       window.jmdictLoaded = true;
       console.log(
         "[Dual Subtitles] JMdict loaded:",
         window.jmdictData.length,
-        "entries"
+        "entries,",
+        Object.keys(window.jmdictIndex).length,
+        "indexed kanji"
       );
     } catch (e) {
       console.error("[Dual Subtitles] Failed to load JMdict:", e);
       window.jmdictData = [];
+      window.jmdictIndex = {};
       window.jmdictLoaded = true;
     }
   })();
@@ -1111,11 +1129,8 @@
   }
 
   // Returns the first object whose kanji array includes the given kanji keyword
-  function findObjectByKanji(kanjiKeyword, data) {
-    return data.find(
-      (entry) =>
-        Array.isArray(entry.kanji) && entry.kanji.includes(kanjiKeyword)
-    );
+  function findObjectByKanji(kanjiKeyword) {
+    return window.jmdictIndex[kanjiKeyword];
   }
 
   // Show the word card
