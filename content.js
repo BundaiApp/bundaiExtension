@@ -8,7 +8,7 @@
       color: "#ffffff",
       background: "#000000",
       opacity: 0.7,
-      fontSize: 18,
+      fontSize: 24,
     },
     subtitle2: {
       source: "subtitle1",
@@ -17,8 +17,8 @@
       opacity: 0.7,
       fontSize: 18,
     },
-    position: 25, // % from bottom
-    gap: 20,
+    position: 15, // % from bottom
+    gap: 10,
     wordCard: {
       backgroundColor: "#000000",
       backgroundOpacity: 0.9,
@@ -1387,14 +1387,13 @@
         position: fixed;
         z-index: 99999;
         background: ${hexToRgba(
-          settings.wordCard.backgroundColor,
-          settings.wordCard.backgroundOpacity
-        )};
+        settings.wordCard.backgroundColor,
+        settings.wordCard.backgroundOpacity
+      )};
         color: ${settings.wordCard.textColor};
         border-radius: ${settings.wordCard.borderRadius}px;
         padding: ${settings.wordCard.padding}px;
-        box-shadow: 0 4px ${
-          settings.wordCard.shadowIntensity
+        box-shadow: 0 4px ${settings.wordCard.shadowIntensity
         }px rgba(0, 0, 0, 0.3);
         min-width: 200px;
         max-width: 300px;
@@ -1493,8 +1492,7 @@
                 const wrappedText = tokens
                   .map(
                     (token) =>
-                      `<span class="subtitle-word" data-reading="${
-                        token.reading || ""
+                      `<span class="subtitle-word" data-reading="${token.reading || ""
                       }">${token.word}</span>`
                   )
                   .join("");
@@ -1567,8 +1565,7 @@
               const wrappedText = tokens
                 .map(
                   (token) =>
-                    `<span class="subtitle-word" data-reading="${
-                      token.reading || ""
+                    `<span class="subtitle-word" data-reading="${token.reading || ""
                     }">${token.word}</span>`
                 )
                 .join("");
