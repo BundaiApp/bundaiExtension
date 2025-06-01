@@ -4,29 +4,29 @@
   let settings = {
     enabled: false,
     subtitle1: {
-      source: 'cc',
-      color: '#ffffff',
-      background: '#000000',
+      source: "cc",
+      color: "#ffffff",
+      background: "#000000",
       opacity: 0.7,
-      fontSize: 18
+      fontSize: 24,
     },
     subtitle2: {
-      source: 'subtitle1',
-      color: '#ffffff',
-      background: '#000000',
+      source: "subtitle1",
+      color: "#ffffff",
+      background: "#000000",
       opacity: 0.7,
-      fontSize: 18
+      fontSize: 18,
     },
-    position: 25, // % from bottom
-    gap: 20,
+    position: 15, // % from bottom
+    gap: 10,
     wordCard: {
-      backgroundColor: '#000000',
+      backgroundColor: "#000000",
       backgroundOpacity: 0.9,
-      textColor: '#ffffff',
+      textColor: "#ffffff",
       borderRadius: 8,
       padding: 16,
-      shadowIntensity: 12
-    }
+      shadowIntensity: 12,
+    },
   };
 
   let subtitleContainer = null;
@@ -42,18 +42,183 @@
   let availableTracks = [];
   let youtubeSubtitleTracks = [];
 
+  // Japanese text detection and tokenization
+  let kuromojiTokenizer = null;
+  let kuromojiInitializing = false;
+  let kuromojiInitializationError = null;
+
+  // At the top-level of the IIFE, load jmdict-simplified-flat-full.json using fetch
+  window.jmdictData = null;
+  window.jmdictIndex = null;
+  window.jmdictKanaIndex = null;
+  window.jmdictLoaded = false;
+
+  (async function loadJmdict() {
+    try {
+      const response = await fetch(
+        chrome.runtime.getURL("data/japanese/jmdict-simplified-flat-full.json")
+      );
+      window.jmdictData = await response.json();
+
+      // Create index for O(1) lookups
+      console.log("[Dual Subtitles] Creating JMdict index...");
+      window.jmdictIndex = {};
+      window.jmdictKanaIndex = {};
+
+      window.jmdictData.forEach((entry) => {
+        if (Array.isArray(entry.kanji)) {
+          entry.kanji.forEach((kanji) => {
+            // Store the entry directly in the index
+            window.jmdictIndex[kanji] = entry;
+          });
+        }
+      });
+      window.jmdictData.forEach((entry) => {
+        if (Array.isArray(entry.kana)) {
+          entry.kana.forEach((kana) => {
+            // Store the entry directly in the kana index
+            window.jmdictKanaIndex[kana] = entry;
+          });
+        }
+      });
+
+      window.jmdictLoaded = true;
+      console.log(
+        "[Dual Subtitles] JMdict loaded:",
+        window.jmdictData.length,
+        "entries,",
+        Object.keys(window.jmdictIndex).length,
+        "indexed kanji"
+      );
+    } catch (e) {
+      console.error("[Dual Subtitles] Failed to load JMdict:", e);
+      window.jmdictData = [];
+      window.jmdictIndex = {};
+      window.jmdictLoaded = true;
+    }
+  })();
+
+  // Initialize Kuromoji tokenizer
+  async function initializeKuromoji() {
+    if (kuromojiTokenizer) return kuromojiTokenizer;
+    if (kuromojiInitializing) {
+      // Wait for initialization to complete
+      while (kuromojiInitializing) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (kuromojiInitializationError) {
+        throw kuromojiInitializationError;
+      }
+      return kuromojiTokenizer;
+    }
+
+    kuromojiInitializing = true;
+    kuromojiInitializationError = null;
+
+    try {
+      return new Promise((resolve, reject) => {
+        kuromoji
+          .builder({
+            dicPath: chrome.runtime.getURL("node_modules/kuromoji/dict/"),
+          })
+          .build((err, tokenizer) => {
+            kuromojiInitializing = false;
+            if (err) {
+              kuromojiInitializationError = err;
+              log("Error initializing Kuromoji", err);
+              reject(err);
+              return;
+            }
+            kuromojiTokenizer = tokenizer;
+            log("Kuromoji initialized successfully");
+            resolve(tokenizer);
+          });
+      });
+    } catch (error) {
+      kuromojiInitializing = false;
+      kuromojiInitializationError = error;
+      log("Error in Kuromoji initialization", error);
+      throw error;
+    }
+  }
+
+  // Check if text contains Japanese characters
+  function isJapaneseText(text) {
+    if (!text) return false;
+    const japanesePattern =
+      /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\u3000-\u303F]/;
+    return japanesePattern.test(text);
+  }
+
+  // Tokenize text based on language
+  async function tokenizeText(text) {
+    if (!text) return [];
+
+    try {
+      if (isJapaneseText(text)) {
+        if (!kuromojiTokenizer) {
+          await initializeKuromoji();
+        }
+
+        return new Promise((resolve) => {
+          try {
+            const tokens = kuromojiTokenizer.tokenize(text);
+            resolve(
+              tokens.map((token) => ({
+                word: token.surface_form,
+                reading: token.reading,
+                pos: token.pos,
+                baseForm: token.basic_form,
+              }))
+            );
+          } catch (error) {
+            log("Error tokenizing Japanese text", error);
+            // Fallback to simple splitting if tokenization fails
+            resolve([
+              {
+                word: text,
+                reading: null,
+                pos: null,
+                baseForm: null,
+              },
+            ]);
+          }
+        });
+      } else {
+        // For non-Japanese text, use simple word splitting
+        return text.split(/\s+/).map((word) => ({
+          word: cleanWord(word),
+          reading: null,
+          pos: null,
+          baseForm: null,
+        }));
+      }
+    } catch (error) {
+      log("Error in tokenizeText", error);
+      // Return the original text as a single token if something goes wrong
+      return [
+        {
+          word: text,
+          reading: null,
+          pos: null,
+          baseForm: null,
+        },
+      ];
+    }
+  }
+
   // Logging helper function
   function log(message, data) {
     if (debugMode) {
-      console.log(`[Dual Subtitles] ${message}`, data || '');
+      console.log(`[Dual Subtitles] ${message}`, data || "");
     }
   }
 
   // Initialize when document is fully loaded
   function initialize() {
     // Check if we're on YouTube
-    isYouTube = window.location.hostname.includes('youtube.com');
-    log('Initializing on ' + (isYouTube ? 'YouTube' : 'other site'));
+    isYouTube = window.location.hostname.includes("youtube.com");
+    log("Initializing on " + (isYouTube ? "YouTube" : "other site"));
 
     // Load YouTube utils script if we're on YouTube
     if (isYouTube) {
@@ -63,7 +228,7 @@
     // Load saved settings
     chrome.storage.sync.get(settings, (items) => {
       settings = items;
-      log('Loaded settings', settings);
+      log("Loaded settings", settings);
 
       if (settings.enabled) {
         setupSubtitleDisplay();
@@ -72,10 +237,10 @@
 
     // Listen for messages from popup
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      log('Received message', message);
+      log("Received message", message);
 
-      if (message.action === 'updateSettings') {
-        log('Received settings update', message.settings);
+      if (message.action === "updateSettings") {
+        log("Received settings update", message.settings);
         const wasEnabled = settings.enabled;
         settings = message.settings;
 
@@ -90,8 +255,8 @@
         updateSubtitleStyles(settings);
 
         sendResponse({ success: true });
-      } else if (message.action === 'updateTracks') {
-        log('Received track update', message.settings);
+      } else if (message.action === "updateTracks") {
+        log("Received track update", message.settings);
         if (message.settings.subtitle1) {
           settings.subtitle1.source = message.settings.subtitle1.source;
         }
@@ -101,8 +266,7 @@
         setupTextTracks(); // This will update the active tracks
         updateSubtitleContent(); // This will update the display
         sendResponse({ success: true });
-      }
-      else if (message.action === 'getSubtitleTracks') {
+      } else if (message.action === "getSubtitleTracks") {
         // Send available subtitle tracks back to the popup
         detectAvailableTracks().then(() => {
           sendResponse({ tracks: availableTracks });
@@ -121,16 +285,16 @@
   function injectYouTubeUtilsScript() {
     // Check if the script is already loaded
     if (window.dualSubtitles && window.dualSubtitles.youtube) {
-      log('YouTube utils already loaded');
+      log("YouTube utils already loaded");
       return;
     }
 
     try {
       // Create a script element to load the YouTube utils
-      const script = document.createElement('script');
-      script.src = chrome.runtime.getURL('getYtSubs.js');
+      const script = document.createElement("script");
+      script.src = chrome.runtime.getURL("getYtSubs.js");
       script.onload = function () {
-        log('YouTube subtitle utils script loaded');
+        log("YouTube subtitle utils script loaded");
         // Script has loaded, now we can use the YouTube subtitle functions
         if (settings.enabled) {
           loadYouTubeSubtitles();
@@ -138,7 +302,7 @@
       };
       (document.head || document.documentElement).appendChild(script);
     } catch (e) {
-      log('Error injecting YouTube utils script', e);
+      log("Error injecting YouTube utils script", e);
     }
   }
 
@@ -146,13 +310,13 @@
   async function loadYouTubeSubtitles() {
     if (!isYouTube || !videoElement) return;
 
-    log('Attempting to load YouTube subtitles');
+    log("Attempting to load YouTube subtitles");
 
     // Make sure video element is found
     if (!videoElement) {
       videoElement = findVideoElement();
       if (!videoElement) {
-        log('No video element found for YouTube subtitles');
+        log("No video element found for YouTube subtitles");
         return;
       }
     }
@@ -160,29 +324,34 @@
     try {
       const videoId = extractYouTubeVideoIdFromUrl(window.location.href);
       if (!videoId) {
-        log('Could not extract YouTube video ID');
+        log("Could not extract YouTube video ID");
         return;
       }
 
-      log('Loading subtitles for YouTube video ID:', videoId);
+      log("Loading subtitles for YouTube video ID:", videoId);
 
       // Fetch the video page to get subtitle information
-      const response = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
+      const response = await fetch(
+        `https://www.youtube.com/watch?v=${videoId}`
+      );
       const html = await response.text();
 
       // Extract ytInitialPlayerResponse JSON from HTML
-      const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\});/s);
+      const playerResponseMatch = html.match(
+        /ytInitialPlayerResponse\s*=\s*(\{.*?\});/s
+      );
       if (!playerResponseMatch) {
-        log('Could not find player response in HTML');
+        log("Could not find player response in HTML");
         return;
       }
 
       // Parse the player response
       const playerResponse = JSON.parse(playerResponseMatch[1]);
-      const captionTracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      const captionTracks =
+        playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
       if (!captionTracks || captionTracks.length === 0) {
-        log('No subtitles available for this video');
+        log("No subtitles available for this video");
         return;
       }
 
@@ -193,29 +362,31 @@
         languageCode: track.languageCode,
         name: track.name.simpleText,
         baseUrl: track.baseUrl,
-        isDefault: !!track.isDefault
+        isDefault: !!track.isDefault,
       }));
 
-      log('Found YouTube subtitle tracks', youtubeSubtitleTracks);
+      log("Found YouTube subtitle tracks", youtubeSubtitleTracks);
 
       // Clear existing tracks
-      availableTracks = [{
-        id: 'cc',
-        label: 'Closed Captions (CC)'
-      }];
+      availableTracks = [
+        {
+          id: "cc",
+          label: "Closed Captions (CC)",
+        },
+      ];
 
       // Add YouTube tracks to available tracks
-      youtubeSubtitleTracks.forEach(track => {
+      youtubeSubtitleTracks.forEach((track) => {
         availableTracks.push({
           id: track.id,
-          label: `YouTube: ${track.name} (${track.languageCode})`
+          label: `${track.name} (${track.languageCode})`,
         });
       });
 
       // Load subtitles for the selected tracks
       await loadSelectedYouTubeSubtitles();
     } catch (e) {
-      log('Error loading YouTube subtitles', e);
+      log("Error loading YouTube subtitles", e);
     }
   }
 
@@ -225,7 +396,7 @@
 
     const patterns = [
       /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&?/]+)/i,
-      /youtube\.com\/watch.*?[?&]v=([^&?/]+)/i
+      /youtube\.com\/watch.*?[?&]v=([^&?/]+)/i,
     ];
 
     for (const pattern of patterns) {
@@ -243,16 +414,13 @@
     if (youtubeSubtitleTracks.length === 0) return;
 
     // Determine which YouTube tracks to load based on settings
-    const trackIds = [
-      settings.subtitle1.source,
-      settings.subtitle2.source
-    ];
+    const trackIds = [settings.subtitle1.source, settings.subtitle2.source];
 
     const tracksToLoad = [];
 
-    trackIds.forEach(sourceId => {
-      if (sourceId.startsWith('youtube_')) {
-        const index = parseInt(sourceId.replace('youtube_', ''));
+    trackIds.forEach((sourceId) => {
+      if (sourceId.startsWith("youtube_")) {
+        const index = parseInt(sourceId.replace("youtube_", ""));
         if (youtubeSubtitleTracks[index]) {
           tracksToLoad.push(youtubeSubtitleTracks[index]);
         }
@@ -269,11 +437,11 @@
 
         // Transform the events into cues
         const cues = data.events
-          .filter(event => event.segs)
-          .map(event => {
+          .filter((event) => event.segs)
+          .map((event) => {
             const text = event.segs
-              .map(seg => seg.utf8 || '')
-              .join('')
+              .map((seg) => seg.utf8 || "")
+              .join("")
               .trim();
 
             const startTime = event.tStartMs / 1000;
@@ -282,19 +450,23 @@
             return {
               start: startTime,
               end: endTime,
-              text: text
+              text: text,
             };
           })
-          .filter(cue => cue.text);
+          .filter((cue) => cue.text);
 
         if (cues.length === 0) continue;
 
         // Create a text track
-        const textTrack = videoElement.addTextTrack('subtitles', track.name, track.languageCode);
-        textTrack.mode = 'hidden';
+        const textTrack = videoElement.addTextTrack(
+          "subtitles",
+          track.name,
+          track.languageCode
+        );
+        textTrack.mode = "hidden";
 
         // Add cues to the track
-        cues.forEach(cue => {
+        cues.forEach((cue) => {
           const vttCue = new VTTCue(cue.start, cue.end, cue.text);
           textTrack.addCue(vttCue);
         });
@@ -302,7 +474,7 @@
         // Store additional YouTube-specific information
         textTrack.youtubeTrack = {
           id: track.id,
-          baseUrl: track.baseUrl
+          baseUrl: track.baseUrl,
         };
 
         log(`Created text track for ${track.name}`);
@@ -325,7 +497,7 @@
       if (settings.enabled && (!videoElement || !subtitleContainer)) {
         const videoFound = findVideoElement();
         if (videoFound && videoFound !== videoElement) {
-          log('New video element detected', videoFound);
+          log("New video element detected", videoFound);
           videoElement = videoFound;
           setupSubtitleDisplay();
 
@@ -344,7 +516,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['style', 'class']
+      attributeFilter: ["style", "class"],
     });
   }
 
@@ -354,14 +526,14 @@
 
     // Default CC option
     availableTracks.push({
-      id: 'cc',
-      label: 'Closed Captions (CC)'
+      id: "cc",
+      label: "Closed Captions (CC)",
     });
 
     if (!videoElement) {
       videoElement = findVideoElement();
       if (!videoElement) {
-        log('No video element found for track detection');
+        log("No video element found for track detection");
         return;
       }
     }
@@ -372,17 +544,23 @@
         const videoId = extractYouTubeVideoIdFromUrl(window.location.href);
         if (videoId) {
           // Fetch the video page to get subtitle information
-          const response = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
+          const response = await fetch(
+            `https://www.youtube.com/watch?v=${videoId}`
+          );
           const html = await response.text();
 
           // Extract ytInitialPlayerResponse JSON from HTML
-          const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.*?\});/s);
+          const playerResponseMatch = html.match(
+            /ytInitialPlayerResponse\s*=\s*(\{.*?\});/s
+          );
           if (playerResponseMatch) {
             const playerResponse = JSON.parse(playerResponseMatch[1]);
-            const captionTracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+            const captionTracks =
+              playerResponse.captions?.playerCaptionsTracklistRenderer
+                ?.captionTracks;
 
             if (captionTracks && captionTracks.length > 0) {
-              log('Found YouTube subtitle tracks:', captionTracks.length);
+              log("Found YouTube subtitle tracks:", captionTracks.length);
 
               // Add each track to available tracks
               captionTracks.forEach((track, index) => {
@@ -390,10 +568,10 @@
                 const trackLabel = `${track.name.simpleText} (${track.languageCode})`;
 
                 // Only add if not already in the list
-                if (!availableTracks.some(t => t.id === trackId)) {
+                if (!availableTracks.some((t) => t.id === trackId)) {
                   availableTracks.push({
                     id: trackId,
-                    label: trackLabel
+                    label: trackLabel,
                   });
                 }
               });
@@ -405,51 +583,52 @@
                 languageCode: track.languageCode,
                 name: track.name.simpleText,
                 baseUrl: track.baseUrl,
-                isDefault: !!track.isDefault
+                isDefault: !!track.isDefault,
               }));
             }
           }
         }
       } catch (e) {
-        log('Error detecting YouTube subtitle tracks:', e);
+        log("Error detecting YouTube subtitle tracks:", e);
       }
     }
 
     // Try to get tracks from video element
     if (videoElement.textTracks && videoElement.textTracks.length > 0) {
       const tracks = Array.from(videoElement.textTracks);
-      log('Found text tracks on video element:', tracks.length);
+      log("Found text tracks on video element:", tracks.length);
 
       tracks.forEach((track, index) => {
         const trackId = `subtitle${index + 1}`;
-        const trackLabel = track.label || track.language || `Track ${index + 1}`;
+        const trackLabel =
+          track.label || track.language || `Track ${index + 1}`;
 
         // Only add if not already in the list
-        if (!availableTracks.some(t => t.id === trackId)) {
+        if (!availableTracks.some((t) => t.id === trackId)) {
           availableTracks.push({
             id: trackId,
-            label: trackLabel
+            label: trackLabel,
           });
         }
       });
     }
 
-    log('Available tracks:', availableTracks);
+    log("Available tracks:", availableTracks);
   }
 
   // YouTube-specific subtitle detection
   function detectYouTubeSubtitles() {
     // Try to access YouTube player API
-    if (typeof document.querySelector('.html5-video-player') !== 'undefined') {
-      const ytPlayer = document.querySelector('.html5-video-player');
+    if (typeof document.querySelector(".html5-video-player") !== "undefined") {
+      const ytPlayer = document.querySelector(".html5-video-player");
 
       // Look for subtitle menu button and simulate a click to populate tracks
-      const subtitleButton = document.querySelector('.ytp-subtitles-button');
+      const subtitleButton = document.querySelector(".ytp-subtitles-button");
       if (subtitleButton) {
-        log('Found YouTube subtitle button');
+        log("Found YouTube subtitle button");
 
         // Look for existing subtitle menu items
-        const settingsButton = document.querySelector('.ytp-settings-button');
+        const settingsButton = document.querySelector(".ytp-settings-button");
         if (settingsButton) {
           // Click settings button to open menu
           try {
@@ -457,8 +636,12 @@
 
             // Look for subtitle menu item
             setTimeout(() => {
-              const subtitleMenuItem = Array.from(document.querySelectorAll('.ytp-menuitem')).find(
-                item => item.textContent.includes('Subtitles/CC') || item.textContent.includes('Caption')
+              const subtitleMenuItem = Array.from(
+                document.querySelectorAll(".ytp-menuitem")
+              ).find(
+                (item) =>
+                  item.textContent.includes("Subtitles/CC") ||
+                  item.textContent.includes("Caption")
               );
 
               if (subtitleMenuItem) {
@@ -466,18 +649,23 @@
 
                 // Now the caption options should be showing
                 setTimeout(() => {
-                  const captionOptions = document.querySelectorAll('.ytp-menuitem');
+                  const captionOptions =
+                    document.querySelectorAll(".ytp-menuitem");
                   if (captionOptions.length > 0) {
-                    log('Found YouTube caption options', captionOptions.length);
+                    log("Found YouTube caption options", captionOptions.length);
 
                     captionOptions.forEach((option, index) => {
                       const label = option.textContent.trim();
-                      if (label && !label.includes('Off')) {
+                      if (label && !label.includes("Off")) {
                         // Only add if not already in the list
-                        if (!availableTracks.some(t => t.label === `YouTube UI: ${label}`)) {
+                        if (
+                          !availableTracks.some(
+                            (t) => t.label === `YouTube UI: ${label}`
+                          )
+                        ) {
                           availableTracks.push({
                             id: `youtube_ui_${index}`,
-                            label: `YouTube UI: ${label}`
+                            label: `YouTube UI: ${label}`,
                           });
                         }
                       }
@@ -485,7 +673,7 @@
                   }
 
                   // Close the menu by clicking outside
-                  document.querySelector('.ytp-popup').click();
+                  document.querySelector(".ytp-popup").click();
                 }, 100);
               } else {
                 // Close the menu
@@ -493,7 +681,7 @@
               }
             }, 100);
           } catch (e) {
-            log('Error accessing YouTube captions menu', e);
+            log("Error accessing YouTube captions menu", e);
           }
         }
       }
@@ -506,53 +694,47 @@
     if (!videoElement) {
       videoElement = findVideoElement();
       if (!videoElement) {
-        log('No video element found, retrying later');
+        log("No video element found, retrying later");
         setTimeout(setupSubtitleDisplay, 1000);
         return;
       }
     }
 
-    log('Setting up subtitle display for video', videoElement);
+    log("Setting up subtitle display for video", videoElement);
 
     // Create container for subtitles if not already created
     if (!subtitleContainer) {
-      subtitleContainer = document.createElement('div');
-      subtitleContainer.className = 'dual-subtitles-container';
+      subtitleContainer = document.createElement("div");
+      subtitleContainer.className = "dual-subtitles-container";
       subtitleContainer.style.cssText = `
-      position: fixed;
-      left: 50%;
-      bottom: ${settings.position}%;
-      transform: translateX(-50%);
-      z-index: 9999;
-      text-align: center;
-      pointer-events: auto;
-      width: 100%;
-      max-width: 80%;
-      display: flex;
-      flex-direction: column;
-      gap: ${settings.gap}px;
-    `;
+        position: fixed;
+        left: 50%;
+        bottom: ${settings.position}%;
+        transform: translateX(-50%);
+        z-index: 9999;
+        text-align: center;
+        pointer-events: auto;
+        display: flex;
+        flex-direction: column;
+        gap: ${settings.gap}px;
+        max-width: 80%;
+        width: fit-content;
+        min-width: min-content;
+        // background-color: rgba(255, 0, 0, 0.2); /* Debug background */
+      `;
       document.body.appendChild(subtitleContainer);
 
       // Add mouse events to container for video control
-      subtitleContainer.addEventListener('mouseenter', () => {
+      subtitleContainer.addEventListener("mouseenter", () => {
         if (videoElement && !videoElement.paused) {
           videoElement.pause();
-          console.log('Video paused');
-        }
-      });
-
-      // play video when mouse leaves container
-      subtitleContainer.addEventListener('mouseleave', () => {
-        if (videoElement && videoElement.paused) {
-          videoElement.play();
-          console.log('Video playing');
+          console.log("Video paused");
         }
       });
 
       // Create elements for each subtitle track
-      subtitle1Element = document.createElement('div');
-      subtitle1Element.className = 'subtitle-track subtitle-track-1';
+      subtitle1Element = document.createElement("div");
+      subtitle1Element.className = "subtitle-track subtitle-track-1";
       subtitle1Element.style.cssText = `
         padding: 5px 10px;
         border-radius: 4px;
@@ -562,12 +744,14 @@
         pointer-events: auto;
         cursor: pointer;
         background: rgba(0, 0, 0, 0.5);
+        margin: 0 auto;
+        background-color: rgba(0, 255, 0, 0.2); /* Debug background */
       `;
       applySubtitleStyles(subtitle1Element, settings.subtitle1);
       subtitleContainer.appendChild(subtitle1Element);
 
-      subtitle2Element = document.createElement('div');
-      subtitle2Element.className = 'subtitle-track subtitle-track-2';
+      subtitle2Element = document.createElement("div");
+      subtitle2Element.className = "subtitle-track subtitle-track-2";
       subtitle2Element.style.cssText = `
         padding: 5px 10px;
         border-radius: 4px;
@@ -577,11 +761,13 @@
         pointer-events: auto;
         cursor: pointer;
         background: rgba(0, 0, 0, 0.5);
+        margin: 0 auto;
+        background-color: rgba(0, 0, 255, 0.2); /* Debug background */
       `;
       applySubtitleStyles(subtitle2Element, settings.subtitle2);
       subtitleContainer.appendChild(subtitle2Element);
 
-      log('Created subtitle container elements');
+      log("Created subtitle container elements");
     }
 
     // Set up both methods of subtitle extraction
@@ -589,9 +775,9 @@
     detectNativeSubtitles();
 
     // Add video event listeners
-    videoElement.addEventListener('play', onVideoEvent);
-    videoElement.addEventListener('seeked', onVideoEvent);
-    videoElement.addEventListener('timeupdate', updateSubtitleContent);
+    videoElement.addEventListener("play", onVideoEvent);
+    videoElement.addEventListener("seeked", onVideoEvent);
+    videoElement.addEventListener("timeupdate", updateSubtitleContent);
 
     // If we're on YouTube, try to load YouTube subtitles
     if (isYouTube) {
@@ -601,14 +787,14 @@
 
   // Handle video events
   function onVideoEvent(event) {
-    log('Video event', event.type);
+    log("Video event", event.type);
     // Refresh subtitle detection when video state changes
     setTimeout(() => {
       updateSubtitleContent();
       detectNativeSubtitles();
 
       // If URL changed (YouTube SPA navigation), reload YouTube subtitles
-      if (isYouTube && event.type === 'play') {
+      if (isYouTube && event.type === "play") {
         const videoId = extractYouTubeVideoIdFromUrl(window.location.href);
         if (videoId) {
           loadYouTubeSubtitles();
@@ -620,7 +806,10 @@
   // Apply styles to subtitle elements
   function applySubtitleStyles(element, subtitleSettings) {
     element.style.color = subtitleSettings.color;
-    element.style.backgroundColor = hexToRgba(subtitleSettings.background, subtitleSettings.opacity);
+    element.style.backgroundColor = hexToRgba(
+      subtitleSettings.background,
+      subtitleSettings.opacity
+    );
   }
 
   // Convert hex color to rgba for opacity
@@ -634,16 +823,16 @@
   // Find the main video element on the page
   function findVideoElement() {
     // First try to find the largest video
-    const videos = Array.from(document.querySelectorAll('video'));
+    const videos = Array.from(document.querySelectorAll("video"));
     if (videos.length === 0) return null;
 
-    log('Found video elements', videos.length);
+    log("Found video elements", videos.length);
 
     // For YouTube, prefer the main player video
     if (isYouTube) {
-      const ytVideo = document.querySelector('.html5-main-video');
+      const ytVideo = document.querySelector(".html5-main-video");
       if (ytVideo) {
-        log('Found YouTube main video');
+        log("Found YouTube main video");
         return ytVideo;
       }
     }
@@ -665,26 +854,26 @@
     // Common subtitle container selectors for popular streaming platforms
     const subtitleSelectors = [
       // YouTube - More specific selectors for YouTube
-      '.ytp-caption-segment',
-      '.caption-window .captions-text .caption-visual-line .caption-visual-text',
-      '.captions-text span',
+      ".ytp-caption-segment",
+      ".caption-window .captions-text .caption-visual-line .caption-visual-text",
+      ".captions-text span",
       // Netflix
-      '.player-timedtext-text-container',
+      ".player-timedtext-text-container",
       // Amazon Prime
-      '.atvwebplayersdk-captions-text',
+      ".atvwebplayersdk-captions-text",
       // Hulu
-      '.closed-caption-container',
+      ".closed-caption-container",
       // Disney+
-      '.atv-subtitle-span',
+      ".atv-subtitle-span",
       // General video players
-      '.vjs-text-track-display',
-      '.mejs-captions-text',
-      '.fp-captions',
+      ".vjs-text-track-display",
+      ".mejs-captions-text",
+      ".fp-captions",
       // Generic selectors that might contain subtitles
       '[class*="caption"]',
       '[class*="subtitle"]',
       '[id*="caption"]',
-      '[id*="subtitle"]'
+      '[id*="subtitle"]',
     ];
 
     let subtitleElements = [];
@@ -698,7 +887,7 @@
     }
 
     if (subtitleElements.length > 0) {
-      log('Found native subtitle elements', subtitleElements.length);
+      log("Found native subtitle elements", subtitleElements.length);
 
       // Set up observer for each potential subtitle element
       if (nativeSubtitleObserver) {
@@ -711,48 +900,56 @@
       });
 
       // Start observing the subtitle elements
-      subtitleElements.forEach(element => {
+      subtitleElements.forEach((element) => {
         nativeSubtitleObserver.observe(element, {
           childList: true,
           subtree: true,
-          characterData: true
+          characterData: true,
         });
       });
 
       // Initial extraction
       extractNativeSubtitles(subtitleElements);
     } else {
-      log('No native subtitle elements found with standard selectors');
+      log("No native subtitle elements found with standard selectors");
 
       // Special handling for YouTube if no elements found with standard selectors
       if (isYouTube) {
-        const ytCaptionWindow = document.querySelector('.caption-window');
+        const ytCaptionWindow = document.querySelector(".caption-window");
         if (ytCaptionWindow) {
-          log('Found YouTube caption window', ytCaptionWindow);
+          log("Found YouTube caption window", ytCaptionWindow);
 
           if (nativeSubtitleObserver) {
             nativeSubtitleObserver.disconnect();
           }
 
           nativeSubtitleObserver = new MutationObserver((mutations) => {
-            const captionTexts = ytCaptionWindow.querySelectorAll('.captions-text span');
+            const captionTexts = ytCaptionWindow.querySelectorAll(
+              ".captions-text span"
+            );
             if (captionTexts.length > 0) {
-              let subtitleText = '';
-              captionTexts.forEach(span => {
-                subtitleText += span.textContent + ' ';
+              let subtitleText = "";
+              captionTexts.forEach((span) => {
+                subtitleText += span.textContent + " ";
               });
 
               // Use the extracted text based on the selected source
-              if (settings.subtitle1.source === 'cc' || settings.subtitle1.source.startsWith('youtube_ui_')) {
+              if (
+                settings.subtitle1.source === "cc" ||
+                settings.subtitle1.source.startsWith("youtube_ui_")
+              ) {
                 subtitle1Element.textContent = subtitleText.trim();
-                subtitle1Element.style.display = 'inline-block';
-                log('Updated YouTube subtitle 1 text', subtitleText);
+                subtitle1Element.style.display = "inline-block";
+                log("Updated YouTube subtitle 1 text", subtitleText);
               }
 
-              if (settings.subtitle2.source === 'cc' || settings.subtitle2.source.startsWith('youtube_ui_')) {
+              if (
+                settings.subtitle2.source === "cc" ||
+                settings.subtitle2.source.startsWith("youtube_ui_")
+              ) {
                 subtitle2Element.textContent = subtitleText.trim();
-                subtitle2Element.style.display = 'inline-block';
-                log('Updated YouTube subtitle 2 text', subtitleText);
+                subtitle2Element.style.display = "inline-block";
+                log("Updated YouTube subtitle 2 text", subtitleText);
               }
             }
           });
@@ -760,7 +957,7 @@
           nativeSubtitleObserver.observe(ytCaptionWindow, {
             childList: true,
             subtree: true,
-            characterData: true
+            characterData: true,
           });
         }
       }
@@ -772,22 +969,30 @@
     if (!subtitle1Element || !subtitle2Element) return;
 
     // Get text from the first element for subtitle 1 based on source
-    if (settings.subtitle1.source === 'cc' && elements[0] && elements[0].textContent.trim()) {
+    if (
+      settings.subtitle1.source === "cc" &&
+      elements[0] &&
+      elements[0].textContent.trim()
+    ) {
       subtitle1Element.textContent = elements[0].textContent.trim();
-      subtitle1Element.style.display = 'inline-block';
-      log('Updated subtitle 1 text from native', subtitle1Element.textContent);
+      subtitle1Element.style.display = "inline-block";
+      log("Updated subtitle 1 text from native", subtitle1Element.textContent);
     }
 
     // Get text from the second element for subtitle 2 based on source
-    if (settings.subtitle2.source === 'cc' && elements[0] && elements[0].textContent.trim()) {
+    if (
+      settings.subtitle2.source === "cc" &&
+      elements[0] &&
+      elements[0].textContent.trim()
+    ) {
       // If there's a second subtitle element, use it, otherwise use the first one
       if (elements[1] && elements[1].textContent.trim()) {
         subtitle2Element.textContent = elements[1].textContent.trim();
       } else {
         subtitle2Element.textContent = elements[0].textContent.trim();
       }
-      subtitle2Element.style.display = 'inline-block';
-      log('Updated subtitle 2 text from native', subtitle2Element.textContent);
+      subtitle2Element.style.display = "inline-block";
+      log("Updated subtitle 2 text from native", subtitle2Element.textContent);
     }
   }
 
@@ -797,7 +1002,7 @@
 
     // Check if textTracks is available
     if (videoElement.textTracks) {
-      log('Setting up textTrack observers', videoElement.textTracks.length);
+      log("Setting up textTrack observers", videoElement.textTracks.length);
 
       // Watch for changes in the textTracks
       if (subtitleObserver) {
@@ -814,10 +1019,10 @@
           childList: true,
           subtree: true,
           attributes: true,
-          characterData: true
+          characterData: true,
         });
       } catch (e) {
-        log('Error observing textTracks', e);
+        log("Error observing textTracks", e);
       }
 
       // Set up initial state
@@ -825,18 +1030,18 @@
 
       // Also listen for cuechange events on each track
       try {
-        Array.from(videoElement.textTracks).forEach(track => {
-          track.addEventListener('cuechange', updateSubtitleContent);
+        Array.from(videoElement.textTracks).forEach((track) => {
+          track.addEventListener("cuechange", updateSubtitleContent);
         });
       } catch (e) {
-        log('Error adding cuechange listeners', e);
+        log("Error adding cuechange listeners", e);
       }
     } else {
-      log('No textTracks found on video element');
+      log("No textTracks found on video element");
     }
 
     // Listen for the 'timeupdate' event as a fallback
-    videoElement.addEventListener('timeupdate', () => {
+    videoElement.addEventListener("timeupdate", () => {
       if (!subtitle1Element.textContent && !subtitle2Element.textContent) {
         updateSubtitleContent();
       }
@@ -848,7 +1053,7 @@
     if (!videoElement || !videoElement.textTracks) return;
 
     const tracks = Array.from(videoElement.textTracks);
-    log('Available text tracks', tracks.length);
+    log("Available text tracks", tracks.length);
 
     if (tracks.length === 0) {
       // No tracks found, retry later
@@ -858,15 +1063,17 @@
 
     // Log details of each track
     tracks.forEach((track, index) => {
-      log(`Track ${index}: kind=${track.kind}, label=${track.label}, language=${track.language}, mode=${track.mode}`);
+      log(
+        `Track ${index}: kind=${track.kind}, label=${track.label}, language=${track.language}, mode=${track.mode}`
+      );
     });
 
     // Disable all tracks first to avoid browser's native subtitle display
-    tracks.forEach(track => {
+    tracks.forEach((track) => {
       try {
-        track.mode = 'hidden';
+        track.mode = "hidden";
       } catch (e) {
-        log('Error setting track mode', e);
+        log("Error setting track mode", e);
       }
     });
 
@@ -876,15 +1083,17 @@
     // Map source selection to actual track
     function findTrackBySource(source) {
       // Handle different source types
-      if (source === 'cc') {
+      if (source === "cc") {
         // Try to find a CC track (often the first or has 'captions' kind)
-        return tracks.find(t => t.kind === 'captions') || tracks[0];
-      } else if (source.startsWith('youtube_')) {
+        return tracks.find((t) => t.kind === "captions") || tracks[0];
+      } else if (source.startsWith("youtube_")) {
         // Find YouTube track by ID
-        return tracks.find(t => t.youtubeTrack && t.youtubeTrack.id === source);
-      } else if (source.startsWith('subtitle')) {
+        return tracks.find(
+          (t) => t.youtubeTrack && t.youtubeTrack.id === source
+        );
+      } else if (source.startsWith("subtitle")) {
         // Get track by index - subtitle1 would be tracks[0], subtitle2 would be tracks[1], etc.
-        const index = parseInt(source.replace('subtitle', '')) - 1;
+        const index = parseInt(source.replace("subtitle", "")) - 1;
         return tracks[index >= 0 && index < tracks.length ? index : 0] || null;
       }
       return null;
@@ -896,21 +1105,27 @@
 
     if (track1) {
       try {
-        track1.mode = 'hidden';
+        track1.mode = "hidden";
         activeTextTracks.track1 = track1;
-        log('Selected track 1', track1.label || track1.language || 'Unnamed track');
+        log(
+          "Selected track 1",
+          track1.label || track1.language || "Unnamed track"
+        );
       } catch (e) {
-        log('Error setting track1', e);
+        log("Error setting track1", e);
       }
     }
 
     if (track2) {
       try {
-        track2.mode = 'hidden';
+        track2.mode = "hidden";
         activeTextTracks.track2 = track2;
-        log('Selected track 2', track2.label || track2.language || 'Unnamed track');
+        log(
+          "Selected track 2",
+          track2.label || track2.language || "Unnamed track"
+        );
       } catch (e) {
-        log('Error setting track2', e);
+        log("Error setting track2", e);
       }
     }
 
@@ -920,25 +1135,52 @@
 
   // Clean word of special characters
   function cleanWord(word) {
-    return word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]'"<>?]/g, '');
+    return word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]'"<>?]/g, "");
+  }
+
+  // Returns the first object whose kanji array includes the given kanji keyword
+  function findObjectByKanji(kanjiKeyword) {
+    return window.jmdictIndex[kanjiKeyword];
+  }
+
+  // function findObjectByKana(kanaKeyword) {
+  //   if (!window.jmdictData || !kanaKeyword) return null;
+
+  //   return window.jmdictData.find(entry => {
+  //     if (Array.isArray(entry.kana)) {
+  //       return entry.kana.some(kana => kana === kanaKeyword);
+  //     }
+  //     return false;
+  //   });
+  // }
+  function findObjectByKana(kanaKeyword) {
+    return window.jmdictKanaIndex[kanaKeyword] || null;
   }
 
   // Show the word card
-  function showWordCard(word, x, y, shouldStay = false) {
-    if (!window.wordCard) {
-      window.wordCard = createWordCard();
+  async function showWordCard(word, x, y, shouldStay = false) {
+    if (!word) return;
+
+    // Wait for jmdict to be loaded if not already
+    if (!window.jmdictLoaded) {
+      await new Promise((resolve) => {
+        const check = () =>
+          window.jmdictLoaded ? resolve() : setTimeout(check, 50);
+        check();
+      });
     }
 
-    // Update word
-    const wordContainer = window.wordCard.querySelector('.word-container');
-    wordContainer.textContent = word;
+    // Tokenize the word/text
+    const tokens = await tokenizeText(word);
+    if (tokens.length === 0) return;
 
-    // Position the card
-    const cardRect = window.wordCard.getBoundingClientRect();
+    const card = createWordCard();
+
+    // Calculate position to keep card in viewport
+    const cardRect = card.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
 
-    // Calculate position to keep card in viewport
     let left = x + 20;
     let top = y - cardRect.height - 20;
 
@@ -952,203 +1194,437 @@
       top = y + 20;
     }
 
-    window.wordCard.style.left = `${left}px`;
-    window.wordCard.style.top = `${top}px`;
-    window.wordCard.style.opacity = '1';
-    window.wordCard.style.transform = 'translateY(0)';
+    // Position the card
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
 
-    // If shouldStay is true, set the stay flag
-    if (shouldStay) {
-      window.wordCard.dataset.stay = 'true';
-    } else {
-      window.wordCard.dataset.stay = 'false';
+    // Create content container
+    const contentContainer =
+      card.querySelector(".content-container") || document.createElement("div");
+    contentContainer.className = "content-container";
+    contentContainer.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    `;
+
+    // Clear previous content
+    contentContainer.innerHTML = "";
+
+    // Add the token to the card (now we only show one token)
+    const token = tokens[0];
+    const tokenContainer = document.createElement("div");
+    tokenContainer.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    `;
+
+    // Show the main word at the top
+    const wordElement = document.createElement("div");
+    wordElement.className = "word";
+    wordElement.style.fontWeight = "bold";
+    wordElement.style.fontSize = "1.2em";
+    wordElement.textContent = token.word;
+    tokenContainer.appendChild(wordElement);
+
+    // Lookup in JMdict
+    let entry = null;
+    if (window.jmdictData) {
+      entry = findObjectByKanji(token.word);
+      if (!entry) {
+        entry = findObjectByKana(token.word);
+      }
+      if (!entry && token.reading) {
+        entry = findObjectByKana(token.reading);
+      }
     }
+
+    if (entry) {
+      // Show kana (all readings)
+      if (Array.isArray(entry.kana) && entry.kana.length > 0) {
+        const kanaContainer = document.createElement("div");
+        kanaContainer.style.cssText = `
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          margin: 4px 0;
+        `;
+
+        const kanaLabel = document.createElement("span");
+        kanaLabel.textContent = "Kana: ";
+        kanaLabel.style.cssText = `
+          font-size: 0.9em;
+          color: ${settings.wordCard.textColor};
+          opacity: 0.8;
+          margin-right: 4px;
+          align-self: center;
+        `;
+        kanaContainer.appendChild(kanaLabel);
+
+        entry.kana.forEach((kana) => {
+          const kanaChip = document.createElement("span");
+          kanaChip.className = "kana-chip";
+          kanaChip.textContent = kana;
+          kanaChip.style.cssText = `
+            background: rgba(255, 255, 255, 0.15);
+            color: ${settings.wordCard.textColor};
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+          `;
+          kanaContainer.appendChild(kanaChip);
+        });
+
+        tokenContainer.appendChild(kanaContainer);
+      }
+      // Show meanings (gloss array from all senses)
+      if (Array.isArray(entry.senses) && entry.senses.length > 0) {
+        const glosses = entry.senses
+          .flatMap((sense) => sense.gloss)
+          .filter(Boolean);
+        if (glosses.length > 0) {
+          const meaningContainer = document.createElement("div");
+          meaningContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 4px 0;
+          `;
+
+          const meaningLabel = document.createElement("span");
+          meaningLabel.textContent = "Meanings:";
+          meaningLabel.style.cssText = `
+            font-size: 0.9em;
+            color: ${settings.wordCard.textColor};
+            opacity: 0.8;
+            margin-bottom: 2px;
+          `;
+          meaningContainer.appendChild(meaningLabel);
+
+          const chipsContainer = document.createElement("div");
+          chipsContainer.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+          `;
+
+          glosses.forEach((gloss) => {
+            const meaningChip = document.createElement("span");
+            meaningChip.className = "meaning-chip";
+            meaningChip.textContent = gloss;
+            meaningChip.style.cssText = `
+              background: rgba(100, 149, 237, 0.3);
+              color: ${settings.wordCard.textColor};
+              padding: 3px 10px;
+              border-radius: 14px;
+              font-size: 0.8em;
+              border: 1px solid rgba(100, 149, 237, 0.4);
+              line-height: 1.2;
+            `;
+            chipsContainer.appendChild(meaningChip);
+          });
+
+          meaningContainer.appendChild(chipsContainer);
+          tokenContainer.appendChild(meaningContainer);
+        }
+      }
+    }
+
+    contentContainer.appendChild(tokenContainer);
+
+    // Add content container to card if not already present
+    if (!card.querySelector(".content-container")) {
+      card.appendChild(contentContainer);
+    }
+
+    // Show the card with animation
+    card.style.display = "block";
+    card.style.opacity = "0";
+    card.style.transform = "translateY(10px)";
+
+    // Force reflow
+    card.offsetHeight;
+
+    card.style.opacity = "1";
+    card.style.transform = "translateY(0)";
+
+    // Set stay flag
+    card.dataset.stay = shouldStay ? "true" : "false";
   }
 
   // Hide the word card
   function hideWordCard() {
-    if (window.wordCard) {
+    const card = document.querySelector(".word-card");
+    if (card) {
       // Only hide if the card is not set to stay
-      if (window.wordCard.dataset.stay !== 'true') {
-        window.wordCard.style.opacity = '0';
-        window.wordCard.style.transform = 'translateY(10px)';
+      if (card.dataset.stay !== "true") {
+        card.style.opacity = "0";
+        card.style.transform = "translateY(10px)";
       }
     }
   }
 
   // Close the word card
   function closeWordCard() {
-    if (window.wordCard) {
-      window.wordCard.dataset.stay = 'false';
-      window.wordCard.style.opacity = '0';
-      window.wordCard.style.transform = 'translateY(10px)';
+    const card = document.querySelector(".word-card");
+    if (card) {
+      card.dataset.stay = "false";
+      card.style.opacity = "0";
+      card.style.transform = "translateY(10px)";
     }
   }
 
   // Create and manage the floating word card
   function createWordCard() {
-    const card = document.createElement('div');
-    card.className = 'floating-word-card';
-    card.style.cssText = `
-      position: fixed;
-      background: ${hexToRgba(settings.wordCard.backgroundColor, settings.wordCard.backgroundOpacity)};
-      color: ${settings.wordCard.textColor};
-      min-width: 200px;
-      padding: ${settings.wordCard.padding}px;
-      border-radius: ${settings.wordCard.borderRadius}px;
-      font-size: 18px;
-      z-index: 10000;
-      opacity: 0;
-      transform: translateY(10px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      box-shadow: 0 4px ${settings.wordCard.shadowIntensity}px rgba(0, 0, 0, 0.3);
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    `;
+    let card = document.querySelector(".word-card");
 
-    // Create header with close button
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    `;
+    if (!card) {
+      card = document.createElement("div");
+      card.className = "word-card";
+      card.style.cssText = `
+        position: fixed;
+        z-index: 99999;
+        background: ${hexToRgba(
+        settings.wordCard.backgroundColor,
+        settings.wordCard.backgroundOpacity
+      )};
+        color: ${settings.wordCard.textColor};
+        border-radius: ${settings.wordCard.borderRadius}px;
+        padding: ${settings.wordCard.padding}px;
+        box-shadow: 0 4px ${settings.wordCard.shadowIntensity
+        }px rgba(0, 0, 0, 0.3);
+        min-width: 200px;
+        max-width: 300px;
+        font-size: 16px;
+        line-height: 1.4;
+        opacity: 0;
+        transform: translateY(10px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        display: none;
+      `;
 
-    // Create word container
-    const wordContainer = document.createElement('div');
-    wordContainer.className = 'word-container';
-    wordContainer.style.cssText = `
-      font-size: 24px;
-      font-weight: bold;
-    `;
+      // Create header with close button
+      const header = document.createElement("div");
+      header.style.cssText = `
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        margin-bottom: 8px;
+      `;
 
-    // Create close button
-    const closeButton = document.createElement('button');
-    closeButton.innerHTML = '×';
-    closeButton.style.cssText = `
-      background: none;
-      border: none;
-      color: ${settings.wordCard.textColor};
-      font-size: 24px;
-      cursor: pointer;
-      padding: 0 8px;
-      opacity: 0.7;
-      transition: opacity 0.2s ease;
-    `;
-    closeButton.onmouseover = () => closeButton.style.opacity = '1';
-    closeButton.onmouseout = () => closeButton.style.opacity = '0.7';
-    closeButton.onclick = closeWordCard;
+      // Create close button
+      const closeButton = document.createElement("button");
+      closeButton.innerHTML = "×";
+      closeButton.style.cssText = `
+        background: rgba(0,0,0,0.25);
+        border: none;
+        color: ${settings.wordCard.textColor};
+        font-size: 22px;
+        cursor: pointer;
+        padding: 4px 10px;
+        border-radius: 50%;
+        opacity: 0.8;
+        margin-left: auto;
+        transition: opacity 0.2s, background 0.2s;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+        outline: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `;
+      closeButton.onmouseover = () => {
+        closeButton.style.opacity = "1";
+        closeButton.style.background = "rgba(0,0,0,0.4)";
+      };
+      closeButton.onmouseout = () => {
+        closeButton.style.opacity = "0.8";
+        closeButton.style.background = "rgba(0,0,0,0.25)";
+      };
+      closeButton.onclick = closeWordCard;
 
-    header.appendChild(wordContainer);
-    header.appendChild(closeButton);
-    card.appendChild(header);
+      header.appendChild(closeButton);
+      card.appendChild(header);
 
-    // Create content container for additional elements
-    const contentContainer = document.createElement('div');
-    contentContainer.className = 'content-container';
-    contentContainer.style.cssText = `
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    `;
-    card.appendChild(contentContainer);
+      document.body.appendChild(card);
+    }
 
-    document.body.appendChild(card);
     return card;
   }
 
+  // Helper to check if a track is Japanese
+  function isJapaneseTrack(track) {
+    if (!track) return false;
+    // Check label and languageCode for Japanese
+    return (
+      /japanese|日本語|ja[-_]/i.test(track.label || "") ||
+      /ja[-_]/i.test(track.language || "")
+    );
+  }
+
   // Update the content of the subtitle elements from text tracks
-  function updateSubtitleContent() {
+  async function updateSubtitleContent() {
     if (!subtitle1Element || !subtitle2Element) return;
 
     // Update subtitle 1
     if (activeTextTracks.track1) {
-      try {
-        const hasCues = activeTextTracks.track1.activeCues && activeTextTracks.track1.activeCues.length > 0;
-        if (hasCues) {
-          const cue = activeTextTracks.track1.activeCues[0];
-          if (cue.text) {
-            // Wrap each word in a span
-            const wrappedText = cue.text.split(/\s+/).map(word =>
-              `<span class="subtitle-word">${word}</span>`
-            ).join(' ');
-            subtitle1Element.innerHTML = wrappedText;
-            subtitle1Element.style.display = 'inline-block';
+      // Only show if Japanese
+      if (!isJapaneseTrack(activeTextTracks.track1)) {
+        subtitle1Element.style.display = "none";
+      } else {
+        try {
+          const hasCues =
+            activeTextTracks.track1.activeCues &&
+            activeTextTracks.track1.activeCues.length > 0;
+          if (hasCues) {
+            const cue = activeTextTracks.track1.activeCues[0];
+            if (cue.text) {
+              log("Processing subtitle text:", cue.text);
 
-            // Add hover and click listeners to each word
-            subtitle1Element.querySelectorAll('.subtitle-word').forEach(span => {
-              span.onmouseover = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY);
-                }
-              };
-              span.onmouseout = hideWordCard;
-              span.onclick = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY, true);
-                }
-              };
-            });
+              // Check if the text is Japanese
+              if (isJapaneseText(cue.text)) {
+                log("Detected Japanese text");
+                // For Japanese text, we'll tokenize and wrap each token
+                const tokens = await tokenizeText(cue.text);
+                log("Tokenized Japanese text:", tokens);
+
+                const wrappedText = tokens
+                  .map(
+                    (token) =>
+                      `<span class="subtitle-word" data-reading="${token.reading || ""
+                      }">${token.word}</span>`
+                  )
+                  .join("");
+                subtitle1Element.innerHTML = wrappedText;
+                subtitle1Element.style.display = "inline-block";
+              } else {
+                // For non-Japanese text, use simple word splitting
+                const wrappedText = cue.text
+                  .split(/\s+/)
+                  .map((word) => `<span class="subtitle-word">${word}</span>`)
+                  .join(" ");
+                subtitle1Element.innerHTML = wrappedText;
+                subtitle1Element.style.display = "inline-block";
+              }
+
+              // Add hover and click listeners to each word
+              subtitle1Element
+                .querySelectorAll(".subtitle-word")
+                .forEach((span) => {
+                  span.onmouseover = function (event) {
+                    log("Mouse over word:", this.textContent);
+                    const word = this.textContent;
+                    if (word) {
+                      showWordCard(word, event.clientX, event.clientY);
+                    }
+                  };
+                  span.onmouseout = function () {
+                    const card = document.querySelector(".word-card");
+                    if (card && card.dataset.stay !== "true") {
+                      hideWordCard();
+                    }
+                  };
+                  span.onclick = function (event) {
+                    const word = this.textContent;
+                    if (word) {
+                      showWordCard(word, event.clientX, event.clientY, true);
+                    }
+                  };
+                });
+            }
+          } else {
+            subtitle1Element.style.display = "none";
           }
-        } else {
-          subtitle1Element.style.display = 'none';
+        } catch (e) {
+          console.error("Error updating subtitle 1:", e);
         }
-      } catch (e) {
-        console.error('Error updating subtitle 1:', e);
       }
+    } else {
+      subtitle1Element.style.display = "none";
     }
 
     // Update subtitle 2
     if (activeTextTracks.track2) {
       try {
-        const hasCues = activeTextTracks.track2.activeCues && activeTextTracks.track2.activeCues.length > 0;
+        const hasCues =
+          activeTextTracks.track2.activeCues &&
+          activeTextTracks.track2.activeCues.length > 0;
         if (hasCues) {
           const cue = activeTextTracks.track2.activeCues[0];
           if (cue.text) {
-            // Wrap each word in a span
-            const wrappedText = cue.text.split(/\s+/).map(word =>
-              `<span class="subtitle-word">${word}</span>`
-            ).join(' ');
-            subtitle2Element.innerHTML = wrappedText;
-            subtitle2Element.style.display = 'inline-block';
+            log("Processing subtitle text:", cue.text);
+
+            // Check if the text is Japanese
+            if (isJapaneseText(cue.text)) {
+              log("Detected Japanese text");
+              // For Japanese text, we'll tokenize and wrap each token
+              const tokens = await tokenizeText(cue.text);
+              log("Tokenized Japanese text:", tokens);
+
+              const wrappedText = tokens
+                .map(
+                  (token) =>
+                    `<span class="subtitle-word" data-reading="${token.reading || ""
+                    }">${token.word}</span>`
+                )
+                .join("");
+              subtitle2Element.innerHTML = wrappedText;
+              subtitle2Element.style.display = "inline-block";
+            } else {
+              // For non-Japanese text, use simple word splitting
+              const wrappedText = cue.text
+                .split(/\s+/)
+                .map((word) => `<span class="subtitle-word">${word}</span>`)
+                .join(" ");
+              subtitle2Element.innerHTML = wrappedText;
+              subtitle2Element.style.display = "inline-block";
+            }
 
             // Add hover and click listeners to each word
-            subtitle2Element.querySelectorAll('.subtitle-word').forEach(span => {
-              span.onmouseover = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY);
-                }
-              };
-              span.onmouseout = hideWordCard;
-              span.onclick = function (event) {
-                const cleanedWord = cleanWord(this.textContent);
-                if (cleanedWord) {
-                  showWordCard(cleanedWord, event.clientX, event.clientY, true);
-                }
-              };
-            });
+            subtitle2Element
+              .querySelectorAll(".subtitle-word")
+              .forEach((span) => {
+                span.onmouseover = function (event) {
+                  log("Mouse over word:", this.textContent);
+                  const word = this.textContent;
+                  if (word) {
+                    showWordCard(word, event.clientX, event.clientY);
+                  }
+                };
+                span.onmouseout = function () {
+                  const card = document.querySelector(".word-card");
+                  if (card && card.dataset.stay !== "true") {
+                    hideWordCard();
+                  }
+                };
+                span.onclick = function (event) {
+                  const word = this.textContent;
+                  if (word) {
+                    showWordCard(word, event.clientX, event.clientY, true);
+                  }
+                };
+              });
           }
         } else {
-          subtitle2Element.style.display = 'none';
+          subtitle2Element.style.display = "none";
         }
       } catch (e) {
-        console.error('Error updating subtitle 2:', e);
+        console.error("Error updating subtitle 2:", e);
       }
     }
 
     // Check for cases where second subtitle is a copy of the first
-    if (settings.subtitle2.source === 'subtitle1' && subtitle1Element.textContent) {
+    if (
+      settings.subtitle2.source === "subtitle1" &&
+      subtitle1Element.textContent
+    ) {
       const wrappedText = subtitle1Element.innerHTML;
       subtitle2Element.innerHTML = wrappedText;
-      subtitle2Element.style.display = 'inline-block';
+      subtitle2Element.style.display = "inline-block";
 
       // Add hover and click listeners to each word in subtitle 2
-      subtitle2Element.querySelectorAll('.subtitle-word').forEach(span => {
+      subtitle2Element.querySelectorAll(".subtitle-word").forEach((span) => {
         span.onmouseover = function (event) {
           const cleanedWord = cleanWord(this.textContent);
           if (cleanedWord) {
@@ -1180,14 +1656,17 @@
 
     // Update word card if it exists
     if (window.wordCard) {
-      window.wordCard.style.background = hexToRgba(settings.wordCard.backgroundColor, settings.wordCard.backgroundOpacity);
+      window.wordCard.style.background = hexToRgba(
+        settings.wordCard.backgroundColor,
+        settings.wordCard.backgroundOpacity
+      );
       window.wordCard.style.color = settings.wordCard.textColor;
       window.wordCard.style.borderRadius = `${settings.wordCard.borderRadius}px`;
       window.wordCard.style.padding = `${settings.wordCard.padding}px`;
       window.wordCard.style.boxShadow = `0 4px ${settings.wordCard.shadowIntensity}px rgba(0, 0, 0, 0.3)`;
 
       // Update close button color
-      const closeButton = window.wordCard.querySelector('button');
+      const closeButton = window.wordCard.querySelector("button");
       if (closeButton) {
         closeButton.style.color = settings.wordCard.textColor;
       }
@@ -1199,18 +1678,18 @@
     // Force refresh of subtitle content
     updateSubtitleContent();
 
-    log('Updated subtitle display with new settings');
+    log("Updated subtitle display with new settings");
   }
 
   // Remove the subtitle display
   function removeSubtitleDisplay() {
-    log('Removing subtitle display');
+    log("Removing subtitle display");
 
     // Clean up event listeners
     if (videoElement) {
-      videoElement.removeEventListener('play', onVideoEvent);
-      videoElement.removeEventListener('seeked', onVideoEvent);
-      videoElement.removeEventListener('timeupdate', updateSubtitleContent);
+      videoElement.removeEventListener("play", onVideoEvent);
+      videoElement.removeEventListener("seeked", onVideoEvent);
+      videoElement.removeEventListener("timeupdate", updateSubtitleContent);
     }
 
     // Remove observers
@@ -1237,22 +1716,28 @@
     // Reset variables
     activeTextTracks = {};
 
-    log('Subtitle display removed');
+    log("Subtitle display removed");
   }
 
   function updateSubtitleStyles(settings) {
-    const subtitle1 = document.querySelector('.subtitle-track-1');
-    const subtitle2 = document.querySelector('.subtitle-track-2');
+    const subtitle1 = document.querySelector(".subtitle-track-1");
+    const subtitle2 = document.querySelector(".subtitle-track-2");
 
     if (subtitle1) {
       subtitle1.style.color = settings.subtitle1.color;
-      subtitle1.style.backgroundColor = hexToRgba(settings.subtitle1.background, settings.subtitle1.opacity);
+      subtitle1.style.backgroundColor = hexToRgba(
+        settings.subtitle1.background,
+        settings.subtitle1.opacity
+      );
       subtitle1.style.fontSize = `${settings.subtitle1.fontSize}px`;
     }
 
     if (subtitle2) {
       subtitle2.style.color = settings.subtitle2.color;
-      subtitle2.style.backgroundColor = hexToRgba(settings.subtitle2.background, settings.subtitle2.opacity);
+      subtitle2.style.backgroundColor = hexToRgba(
+        settings.subtitle2.background,
+        settings.subtitle2.opacity
+      );
       subtitle2.style.fontSize = `${settings.subtitle2.fontSize}px`;
     }
 
@@ -1265,53 +1750,32 @@
 
   // Handle hover events on subtitle elements
   function handleSubtitleHover(event) {
-    console.log('Hover event triggered');
-    const text = event.target.textContent;
-    console.log('Subtitle text:', text);
+    const text = event.target.textContent.trim();
+    if (!text) return;
 
-    const words = text.split(/\s+/);
-    console.log('Words in subtitle:', words);
+    // Get mouse position
+    const x = event.clientX;
+    const y = event.clientY;
 
-    const rect = event.target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    console.log('Mouse position:', { x, y });
-    console.log('Element bounds:', rect);
-
-    const word = words.find(word => {
-      // Create a temporary span to measure word positions
-      const tempSpan = document.createElement('span');
-      tempSpan.style.visibility = 'hidden';
-      tempSpan.style.position = 'absolute';
-      tempSpan.style.font = window.getComputedStyle(event.target).font;
-      tempSpan.textContent = word;
-      document.body.appendChild(tempSpan);
-
-      const wordWidth = tempSpan.offsetWidth;
-      document.body.removeChild(tempSpan);
-
-      // Approximate word position based on character count
-      const charCount = text.substring(0, text.indexOf(word)).length;
-      const charWidth = rect.width / text.length;
-      const wordStartX = charCount * charWidth;
-
-      console.log('Checking word:', word, {
-        wordWidth,
-        charCount,
-        charWidth,
-        wordStartX,
-        isHovered: x >= wordStartX && x <= wordStartX + wordWidth
-      });
-
-      return x >= wordStartX && x <= wordStartX + wordWidth;
-    });
-
-    if (word) {
-      console.log('Hovered word:', word);
-    } else {
-      console.log('No word detected at hover position');
-    }
+    // Show word card with the text
+    showWordCard(text, x, y);
   }
+
+  // Add this at the top-level IIFE or before any subtitle-word spans are created
+  (function injectSubtitleWordHoverStyle() {
+    if (!document.getElementById("subtitle-word-hover-style")) {
+      const style = document.createElement("style");
+      style.id = "subtitle-word-hover-style";
+      style.textContent = `
+        .subtitle-word:hover {
+          background-color: rgba(255,255,255,0.3) !important;
+          border-radius: 4px;
+          transition: background 0.15s;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  })();
 
   // Initialize when the content script is loaded
   initialize();
