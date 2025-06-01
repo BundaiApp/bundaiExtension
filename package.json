@@ -29,6 +29,9 @@
   },
   "homepage": "https://github.com/BundaiApp/bundaiExtension#readme",
   "dependencies": {
-    "kuromoji": "^0.1.2"
+    "@apollo/client": "^3.13.8",
+    "graphql": "^16.11.0",
+    "kuromoji": "^0.1.2",
+    "lodash": "^4.17.21"
   }
 }
