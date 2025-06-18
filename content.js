@@ -1,58 +1,53 @@
-// content.js
-(() => {
-  // Extension state
-  let settings = {
-    enabled: false,
-    subtitle1: {
-      source: "cc",
-      color: "#ffffff",
-      background: "#000000",
-      opacity: 0.7,
-      fontSize: 24,
-    },
-    subtitle2: {
-      source: "subtitle1",
-      color: "#ffffff",
-      background: "#000000",
-      opacity: 0.7,
-      fontSize: 18,
-    },
-    position: 15, // % from bottom
-    gap: 10,
-    wordCard: {
-      backgroundColor: "#000000",
-      backgroundOpacity: 0.9,
-      textColor: "#ffffff",
-      borderRadius: 8,
-      padding: 16,
-      shadowIntensity: 12,
-    },
-  };
+// content.js - Chrome Extension Content Script for YouTube Caption Logging
 
-  let subtitleContainer = null;
-  let subtitle1Element = null;
-  let subtitle2Element = null;
+(function () {
+  "use strict";
+
+  // Add styles for our custom container and tokens
+  const style = document.createElement("style");
+  style.textContent = `
+    .bundai-caption-container {
+      position: absolute;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.8);
+      font-size: 20px;
+      text-align: center;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+      z-index: 9999;
+    }
+    .bundai-caption-container.visible {
+      opacity: 1;
+    }
+    .bundai-token {
+      display: inline;
+      padding: 0 2px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    .bundai-token:hover {
+      background-color: rgba(255, 255, 255, 0.2);
+    }
+  `;
+  document.head.appendChild(style);
+
+  let lastCaptionText = "";
+  let isMonitoring = false;
+  let tokenizer = null;
   let videoElement = null;
-  let activeTextTracks = {};
-  let subtitleObserver = null;
-  let domObserver = null;
-  let nativeSubtitleObserver = null;
-  let debugMode = true; // Set to true to see console logs for debugging
-  let isYouTube = false;
-  let availableTracks = [];
-  let youtubeSubtitleTracks = [];
+  let wordCard = null;
 
-  // Japanese text detection and tokenization
-  let kuromojiTokenizer = null;
-  let kuromojiInitializing = false;
-  let kuromojiInitializationError = null;
-
-  // At the top-level of the IIFE, load jmdict-simplified-flat-full.json using fetch
+  // JMdict data and loading
   window.jmdictData = null;
   window.jmdictIndex = null;
   window.jmdictKanaIndex = null;
   window.jmdictLoaded = false;
 
+  // Load JMdict data
   (async function loadJmdict() {
     try {
       const response = await fetch(
@@ -61,7 +56,7 @@
       window.jmdictData = await response.json();
 
       // Create index for O(1) lookups
-      console.log("[Dual Subtitles] Creating JMdict index...");
+      console.log("[Bundai] Creating JMdict index...");
       window.jmdictIndex = {};
       window.jmdictKanaIndex = {};
 
@@ -73,6 +68,7 @@
           });
         }
       });
+
       window.jmdictData.forEach((entry) => {
         if (Array.isArray(entry.kana)) {
           entry.kana.forEach((kana) => {
@@ -84,757 +80,242 @@
 
       window.jmdictLoaded = true;
       console.log(
-        "[Dual Subtitles] JMdict loaded:",
+        "[Bundai] JMdict loaded:",
         window.jmdictData.length,
         "entries,",
         Object.keys(window.jmdictIndex).length,
         "indexed kanji"
       );
     } catch (e) {
-      console.error("[Dual Subtitles] Failed to load JMdict:", e);
+      console.error("[Bundai] Failed to load JMdict:", e);
       window.jmdictData = [];
       window.jmdictIndex = {};
       window.jmdictLoaded = true;
     }
   })();
 
-  // Initialize Kuromoji tokenizer
-  async function initializeKuromoji() {
-    if (kuromojiTokenizer) return kuromojiTokenizer;
-    if (kuromojiInitializing) {
-      // Wait for initialization to complete
-      while (kuromojiInitializing) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      if (kuromojiInitializationError) {
-        throw kuromojiInitializationError;
-      }
-      return kuromojiTokenizer;
-    }
-
-    kuromojiInitializing = true;
-    kuromojiInitializationError = null;
-
-    try {
-      return new Promise((resolve, reject) => {
-        kuromoji
-          .builder({
-            dicPath: chrome.runtime.getURL("node_modules/kuromoji/dict/"),
-          })
-          .build((err, tokenizer) => {
-            kuromojiInitializing = false;
-            if (err) {
-              kuromojiInitializationError = err;
-              log("Error initializing Kuromoji", err);
-              reject(err);
-              return;
-            }
-            kuromojiTokenizer = tokenizer;
-            log("Kuromoji initialized successfully");
-            resolve(tokenizer);
-          });
-      });
-    } catch (error) {
-      kuromojiInitializing = false;
-      kuromojiInitializationError = error;
-      log("Error in Kuromoji initialization", error);
-      throw error;
-    }
+  // Helper functions for JMdict lookups
+  function findObjectByKanji(kanjiKeyword) {
+    return window.jmdictIndex[kanjiKeyword];
   }
 
-  // Check if text contains Japanese characters
-  function isJapaneseText(text) {
-    if (!text) return false;
-    const japanesePattern =
-      /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\u3000-\u303F]/;
-    return japanesePattern.test(text);
+  function findObjectByKana(kanaKeyword) {
+    return window.jmdictKanaIndex[kanaKeyword] || null;
   }
 
-  // Tokenize text based on language
-  async function tokenizeText(text) {
-    if (!text) return [];
+  // Add state for sticky card
+  let isCardSticky = false;
 
-    try {
-      if (isJapaneseText(text)) {
-        if (!kuromojiTokenizer) {
-          await initializeKuromoji();
-        }
-
-        return new Promise((resolve) => {
-          try {
-            const tokens = kuromojiTokenizer.tokenize(text);
-            resolve(
-              tokens.map((token) => ({
-                word: token.surface_form,
-                reading: token.reading,
-                pos: token.pos,
-                baseForm: token.basic_form,
-              }))
-            );
-          } catch (error) {
-            log("Error tokenizing Japanese text", error);
-            // Fallback to simple splitting if tokenization fails
-            resolve([
-              {
-                word: text,
-                reading: null,
-                pos: null,
-                baseForm: null,
-              },
-            ]);
-          }
-        });
-      } else {
-        // For non-Japanese text, use simple word splitting
-        return text.split(/\s+/).map((word) => ({
-          word: cleanWord(word),
-          reading: null,
-          pos: null,
-          baseForm: null,
-        }));
-      }
-    } catch (error) {
-      log("Error in tokenizeText", error);
-      // Return the original text as a single token if something goes wrong
-      return [
-        {
-          word: text,
-          reading: null,
-          pos: null,
-          baseForm: null,
-        },
-      ];
-    }
-  }
-
-  // Logging helper function
-  function log(message, data) {
-    if (debugMode) {
-      console.log(`[Dual Subtitles] ${message}`, data || "");
-    }
-  }
-
-  // Initialize when document is fully loaded
-  function initialize() {
-    // Check if we're on YouTube
-    isYouTube = window.location.hostname.includes("youtube.com");
-    log("Initializing on " + (isYouTube ? "YouTube" : "other site"));
-
-    // Load YouTube utils script if we're on YouTube
-    if (isYouTube) {
-      injectYouTubeUtilsScript();
+  // Function to create word card
+  function createWordCard() {
+    if (wordCard) {
+      return wordCard;
     }
 
-    // Load saved settings
-    chrome.storage.sync.get(settings, (items) => {
-      settings = items;
-      log("Loaded settings", settings);
+    wordCard = document.createElement("div");
+    wordCard.className = "word-card";
+    wordCard.style.cssText = `
+      position: fixed;
+      z-index: 999999;
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      min-width: 200px;
+      max-width: 300px;
+      font-size: 16px;
+      line-height: 1.4;
+      pointer-events: auto;
+      display: none;
+    `;
 
-      if (settings.enabled) {
-        setupSubtitleDisplay();
-      }
+    // Add close button
+    const closeButton = document.createElement("button");
+    closeButton.innerHTML = "×";
+    closeButton.style.cssText = `
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: none;
+      border: none;
+      color: white;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px 8px;
+      line-height: 1;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    `;
+    closeButton.addEventListener("mouseenter", () => {
+      closeButton.style.opacity = "1";
     });
-
-    // Listen for messages from popup
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      log("Received message", message);
-
-      if (message.action === "updateSettings") {
-        log("Received settings update", message.settings);
-        const wasEnabled = settings.enabled;
-        settings = message.settings;
-
-        if (!wasEnabled && settings.enabled) {
-          setupSubtitleDisplay();
-        } else if (wasEnabled && !settings.enabled) {
-          removeSubtitleDisplay();
-        } else if (settings.enabled) {
-          updateSubtitleDisplay();
-        }
-
-        updateSubtitleStyles(settings);
-
-        sendResponse({ success: true });
-      } else if (message.action === "updateTracks") {
-        log("Received track update", message.settings);
-        if (message.settings.subtitle1) {
-          settings.subtitle1.source = message.settings.subtitle1.source;
-        }
-        if (message.settings.subtitle2) {
-          settings.subtitle2.source = message.settings.subtitle2.source;
-        }
-        setupTextTracks(); // This will update the active tracks
-        updateSubtitleContent(); // This will update the display
-        sendResponse({ success: true });
-      } else if (message.action === "getSubtitleTracks") {
-        // Send available subtitle tracks back to the popup
-        detectAvailableTracks().then(() => {
-          sendResponse({ tracks: availableTracks });
-        });
-        return true; // Keep the message channel open for async response
-      }
-
-      return true;
+    closeButton.addEventListener("mouseleave", () => {
+      closeButton.style.opacity = "0.7";
     });
-
-    // Start watching for DOM changes to detect video elements and subtitle containers
-    observeDOMChanges();
-  }
-
-  // Inject YouTube utils script
-  function injectYouTubeUtilsScript() {
-    // Check if the script is already loaded
-    if (window.dualSubtitles && window.dualSubtitles.youtube) {
-      log("YouTube utils already loaded");
-      return;
-    }
-
-    try {
-      // Create a script element to load the YouTube utils
-      const script = document.createElement("script");
-      script.src = chrome.runtime.getURL("getYtSubs.js");
-      script.onload = function () {
-        log("YouTube subtitle utils script loaded");
-        // Script has loaded, now we can use the YouTube subtitle functions
-        if (settings.enabled) {
-          loadYouTubeSubtitles();
-        }
-      };
-      (document.head || document.documentElement).appendChild(script);
-    } catch (e) {
-      log("Error injecting YouTube utils script", e);
-    }
-  }
-
-  // Load YouTube subtitles
-  async function loadYouTubeSubtitles() {
-    if (!isYouTube || !videoElement) return;
-
-    log("Attempting to load YouTube subtitles");
-
-    // Make sure video element is found
-    if (!videoElement) {
-      videoElement = findVideoElement();
-      if (!videoElement) {
-        log("No video element found for YouTube subtitles");
-        return;
-      }
-    }
-
-    try {
-      const videoId = extractYouTubeVideoIdFromUrl(window.location.href);
-      if (!videoId) {
-        log("Could not extract YouTube video ID");
-        return;
-      }
-
-      log("Loading subtitles for YouTube video ID:", videoId);
-
-      // Fetch the video page to get subtitle information
-      const response = await fetch(
-        `https://www.youtube.com/watch?v=${videoId}`
-      );
-      const html = await response.text();
-
-      // Extract ytInitialPlayerResponse JSON from HTML
-      const playerResponseMatch = html.match(
-        /ytInitialPlayerResponse\s*=\s*(\{.*?\});/s
-      );
-      if (!playerResponseMatch) {
-        log("Could not find player response in HTML");
-        return;
-      }
-
-      // Parse the player response
-      const playerResponse = JSON.parse(playerResponseMatch[1]);
-      const captionTracks =
-        playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-
-      if (!captionTracks || captionTracks.length === 0) {
-        log("No subtitles available for this video");
-        return;
-      }
-
-      // Transform the tracks into a more usable format
-      youtubeSubtitleTracks = captionTracks.map((track, index) => ({
-        id: `youtube_${index}`,
-        index: index,
-        languageCode: track.languageCode,
-        name: track.name.simpleText,
-        baseUrl: track.baseUrl,
-        isDefault: !!track.isDefault,
-      }));
-
-      log("Found YouTube subtitle tracks", youtubeSubtitleTracks);
-
-      // Clear existing tracks
-      availableTracks = [
-        {
-          id: "cc",
-          label: "Closed Captions (CC)",
-        },
-      ];
-
-      // Add YouTube tracks to available tracks
-      youtubeSubtitleTracks.forEach((track) => {
-        availableTracks.push({
-          id: track.id,
-          label: `${track.name} (${track.languageCode})`,
-        });
-      });
-
-      // Load subtitles for the selected tracks
-      await loadSelectedYouTubeSubtitles();
-    } catch (e) {
-      log("Error loading YouTube subtitles", e);
-    }
-  }
-
-  // Extract YouTube video ID from URL
-  function extractYouTubeVideoIdFromUrl(url) {
-    if (!url) return null;
-
-    const patterns = [
-      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&?/]+)/i,
-      /youtube\.com\/watch.*?[?&]v=([^&?/]+)/i,
-    ];
-
-    for (const pattern of patterns) {
-      const match = url.match(pattern);
-      if (match && match[1]) {
-        return match[1];
-      }
-    }
-
-    return null;
-  }
-
-  // Load selected YouTube subtitle tracks
-  async function loadSelectedYouTubeSubtitles() {
-    if (youtubeSubtitleTracks.length === 0) return;
-
-    // Determine which YouTube tracks to load based on settings
-    const trackIds = [settings.subtitle1.source, settings.subtitle2.source];
-
-    const tracksToLoad = [];
-
-    trackIds.forEach((sourceId) => {
-      if (sourceId.startsWith("youtube_")) {
-        const index = parseInt(sourceId.replace("youtube_", ""));
-        if (youtubeSubtitleTracks[index]) {
-          tracksToLoad.push(youtubeSubtitleTracks[index]);
-        }
-      }
+    closeButton.addEventListener("click", () => {
+      isCardSticky = false;
+      hideWordCard();
     });
+    wordCard.appendChild(closeButton);
 
-    // For each selected track, fetch its content and create a text track
-    for (const track of tracksToLoad) {
-      try {
-        const response = await fetch(`${track.baseUrl}&fmt=json3`);
-        const data = await response.json();
+    // Add content container
+    const contentContainer = document.createElement("div");
+    contentContainer.className = "word-card-content";
+    wordCard.appendChild(contentContainer);
 
-        if (!data.events) continue;
-
-        // Transform the events into cues
-        const cues = data.events
-          .filter((event) => event.segs)
-          .map((event) => {
-            const text = event.segs
-              .map((seg) => seg.utf8 || "")
-              .join("")
-              .trim();
-
-            const startTime = event.tStartMs / 1000;
-            const endTime = (event.tStartMs + (event.dDurationMs || 0)) / 1000;
-
-            return {
-              start: startTime,
-              end: endTime,
-              text: text,
-            };
-          })
-          .filter((cue) => cue.text);
-
-        if (cues.length === 0) continue;
-
-        // Create a text track
-        const textTrack = videoElement.addTextTrack(
-          "subtitles",
-          track.name,
-          track.languageCode
-        );
-        textTrack.mode = "hidden";
-
-        // Add cues to the track
-        cues.forEach((cue) => {
-          const vttCue = new VTTCue(cue.start, cue.end, cue.text);
-          textTrack.addCue(vttCue);
-        });
-
-        // Store additional YouTube-specific information
-        textTrack.youtubeTrack = {
-          id: track.id,
-          baseUrl: track.baseUrl,
-        };
-
-        log(`Created text track for ${track.name}`);
-      } catch (e) {
-        log(`Error loading YouTube track ${track.name}`, e);
-      }
-    }
-
-    // Setup text tracks after loading YouTube subtitles
-    setupTextTracks();
+    document.body.appendChild(wordCard);
+    return wordCard;
   }
 
-  // Set up DOM observer to detect new videos and subtitles
-  function observeDOMChanges() {
-    if (domObserver) {
-      domObserver.disconnect();
-    }
+  // Function to show word card
+  async function showWordCard(word, x, y) {
+    if (!word) return;
 
-    domObserver = new MutationObserver((mutations) => {
-      if (settings.enabled && (!videoElement || !subtitleContainer)) {
-        const videoFound = findVideoElement();
-        if (videoFound && videoFound !== videoElement) {
-          log("New video element detected", videoFound);
-          videoElement = videoFound;
-          setupSubtitleDisplay();
-
-          // If we're on YouTube, load YouTube subtitles
-          if (isYouTube) {
-            loadYouTubeSubtitles();
-          }
-        }
-
-        // Look for native subtitle containers that we can extract text from
-        detectNativeSubtitles();
-      }
-    });
-
-    domObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "class"],
-    });
-  }
-
-  // Detect available subtitle tracks
-  async function detectAvailableTracks() {
-    availableTracks = [];
-
-    // Default CC option
-    availableTracks.push({
-      id: "cc",
-      label: "Closed Captions (CC)",
-    });
-
-    if (!videoElement) {
-      videoElement = findVideoElement();
-      if (!videoElement) {
-        log("No video element found for track detection");
-        return;
-      }
-    }
-
-    // For YouTube, try to get tracks from our YouTube subtitle loader
-    if (isYouTube) {
-      try {
-        const videoId = extractYouTubeVideoIdFromUrl(window.location.href);
-        if (videoId) {
-          // Fetch the video page to get subtitle information
-          const response = await fetch(
-            `https://www.youtube.com/watch?v=${videoId}`
-          );
-          const html = await response.text();
-
-          // Extract ytInitialPlayerResponse JSON from HTML
-          const playerResponseMatch = html.match(
-            /ytInitialPlayerResponse\s*=\s*(\{.*?\});/s
-          );
-          if (playerResponseMatch) {
-            const playerResponse = JSON.parse(playerResponseMatch[1]);
-            const captionTracks =
-              playerResponse.captions?.playerCaptionsTracklistRenderer
-                ?.captionTracks;
-
-            if (captionTracks && captionTracks.length > 0) {
-              log("Found YouTube subtitle tracks:", captionTracks.length);
-
-              // Add each track to available tracks
-              captionTracks.forEach((track, index) => {
-                const trackId = `youtube_${index}`;
-                const trackLabel = `${track.name.simpleText} (${track.languageCode})`;
-
-                // Only add if not already in the list
-                if (!availableTracks.some((t) => t.id === trackId)) {
-                  availableTracks.push({
-                    id: trackId,
-                    label: trackLabel,
-                  });
-                }
-              });
-
-              // Store the tracks for later use
-              youtubeSubtitleTracks = captionTracks.map((track, index) => ({
-                id: `youtube_${index}`,
-                index: index,
-                languageCode: track.languageCode,
-                name: track.name.simpleText,
-                baseUrl: track.baseUrl,
-                isDefault: !!track.isDefault,
-              }));
-            }
-          }
-        }
-      } catch (e) {
-        log("Error detecting YouTube subtitle tracks:", e);
-      }
-    }
-
-    // Try to get tracks from video element
-    if (videoElement.textTracks && videoElement.textTracks.length > 0) {
-      const tracks = Array.from(videoElement.textTracks);
-      log("Found text tracks on video element:", tracks.length);
-
-      tracks.forEach((track, index) => {
-        const trackId = `subtitle${index + 1}`;
-        const trackLabel =
-          track.label || track.language || `Track ${index + 1}`;
-
-        // Only add if not already in the list
-        if (!availableTracks.some((t) => t.id === trackId)) {
-          availableTracks.push({
-            id: trackId,
-            label: trackLabel,
-          });
-        }
+    // Wait for jmdict to be loaded if not already
+    if (!window.jmdictLoaded) {
+      await new Promise((resolve) => {
+        const check = () =>
+          window.jmdictLoaded ? resolve() : setTimeout(check, 50);
+        check();
       });
     }
 
-    log("Available tracks:", availableTracks);
-  }
+    const card = createWordCard();
+    const contentContainer = card.querySelector(".word-card-content");
+    contentContainer.innerHTML = ""; // Clear previous content
 
-  // YouTube-specific subtitle detection
-  function detectYouTubeSubtitles() {
-    // Try to access YouTube player API
-    if (typeof document.querySelector(".html5-video-player") !== "undefined") {
-      const ytPlayer = document.querySelector(".html5-video-player");
+    // Show the word at the top
+    const wordElement = document.createElement("div");
+    wordElement.style.cssText = `
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-bottom: 4px;
+    `;
+    wordElement.textContent = word;
+    contentContainer.appendChild(wordElement);
 
-      // Look for subtitle menu button and simulate a click to populate tracks
-      const subtitleButton = document.querySelector(".ytp-subtitles-button");
-      if (subtitleButton) {
-        log("Found YouTube subtitle button");
+    // Lookup in JMdict
+    let entry = findObjectByKanji(word);
+    if (!entry) {
+      entry = findObjectByKana(word);
+    }
 
-        // Look for existing subtitle menu items
-        const settingsButton = document.querySelector(".ytp-settings-button");
-        if (settingsButton) {
-          // Click settings button to open menu
-          try {
-            settingsButton.click();
+    if (entry) {
+      // Show kanji readings if available
+      if (Array.isArray(entry.kanji) && entry.kanji.length > 0) {
+        const kanjiContainer = document.createElement("div");
+        kanjiContainer.style.cssText = `
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          margin: 4px 0;
+        `;
 
-            // Look for subtitle menu item
-            setTimeout(() => {
-              const subtitleMenuItem = Array.from(
-                document.querySelectorAll(".ytp-menuitem")
-              ).find(
-                (item) =>
-                  item.textContent.includes("Subtitles/CC") ||
-                  item.textContent.includes("Caption")
-              );
+        const kanjiLabel = document.createElement("span");
+        kanjiLabel.textContent = "Kanji: ";
+        kanjiLabel.style.cssText = `
+          font-size: 0.9em;
+          opacity: 0.8;
+          margin-right: 4px;
+        `;
+        kanjiContainer.appendChild(kanjiLabel);
 
-              if (subtitleMenuItem) {
-                subtitleMenuItem.click();
+        entry.kanji.forEach((kanji) => {
+          const kanjiChip = document.createElement("span");
+          kanjiChip.textContent = kanji;
+          kanjiChip.style.cssText = `
+            background: rgba(255, 255, 255, 0.15);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+          `;
+          kanjiContainer.appendChild(kanjiChip);
+        });
 
-                // Now the caption options should be showing
-                setTimeout(() => {
-                  const captionOptions =
-                    document.querySelectorAll(".ytp-menuitem");
-                  if (captionOptions.length > 0) {
-                    log("Found YouTube caption options", captionOptions.length);
+        contentContainer.appendChild(kanjiContainer);
+      }
 
-                    captionOptions.forEach((option, index) => {
-                      const label = option.textContent.trim();
-                      if (label && !label.includes("Off")) {
-                        // Only add if not already in the list
-                        if (
-                          !availableTracks.some(
-                            (t) => t.label === `YouTube UI: ${label}`
-                          )
-                        ) {
-                          availableTracks.push({
-                            id: `youtube_ui_${index}`,
-                            label: `YouTube UI: ${label}`,
-                          });
-                        }
-                      }
-                    });
-                  }
+      // Show meanings (gloss)
+      if (Array.isArray(entry.senses) && entry.senses.length > 0) {
+        const meaningsContainer = document.createElement("div");
+        meaningsContainer.style.cssText = `
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          margin: 4px 0;
+        `;
 
-                  // Close the menu by clicking outside
-                  document.querySelector(".ytp-popup").click();
-                }, 100);
-              } else {
-                // Close the menu
-                settingsButton.click();
-              }
-            }, 100);
-          } catch (e) {
-            log("Error accessing YouTube captions menu", e);
-          }
-        }
+        const meaningsLabel = document.createElement("span");
+        meaningsLabel.textContent = "Meanings:";
+        meaningsLabel.style.cssText = `
+          font-size: 0.9em;
+          opacity: 0.8;
+          margin-bottom: 2px;
+        `;
+        meaningsContainer.appendChild(meaningsLabel);
+
+        const meaningsList = document.createElement("div");
+        meaningsList.style.cssText = `
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+        `;
+
+        // Get all glosses from all senses
+        const glosses = entry.senses
+          .flatMap((sense) => sense.gloss)
+          .filter(Boolean);
+        glosses.forEach((gloss) => {
+          const meaningChip = document.createElement("span");
+          meaningChip.textContent = gloss;
+          meaningChip.style.cssText = `
+            background: rgba(100, 149, 237, 0.3);
+            padding: 3px 10px;
+            border-radius: 14px;
+            font-size: 0.8em;
+            border: 1px solid rgba(100, 149, 237, 0.4);
+            line-height: 1.2;
+          `;
+          meaningsList.appendChild(meaningChip);
+        });
+
+        meaningsContainer.appendChild(meaningsList);
+        contentContainer.appendChild(meaningsContainer);
       }
     }
-  }
 
-  // Set up the subtitle display elements
-  function setupSubtitleDisplay() {
-    // Find the video element if not already found
-    if (!videoElement) {
-      videoElement = findVideoElement();
-      if (!videoElement) {
-        log("No video element found, retrying later");
-        setTimeout(setupSubtitleDisplay, 1000);
-        return;
-      }
-    }
-
-    log("Setting up subtitle display for video", videoElement);
-
-    // Create container for subtitles if not already created
-    if (!subtitleContainer) {
-      subtitleContainer = document.createElement("div");
-      subtitleContainer.className = "dual-subtitles-container";
-      subtitleContainer.style.cssText = `
-        position: fixed;
-        left: 50%;
-        bottom: ${settings.position}%;
-        transform: translateX(-50%);
-        z-index: 9999;
-        text-align: center;
-        pointer-events: auto;
-        display: flex;
-        flex-direction: column;
-        gap: ${settings.gap}px;
-        max-width: 80%;
-        width: fit-content;
-        min-width: min-content;
-        // background-color: rgba(255, 0, 0, 0.2); /* Debug background */
-      `;
-      document.body.appendChild(subtitleContainer);
-
-      // Add mouse events to container for video control
-      subtitleContainer.addEventListener("mouseenter", () => {
-        if (videoElement && !videoElement.paused) {
-          videoElement.pause();
-          console.log("Video paused");
-        }
-      });
-
-      // Create elements for each subtitle track
-      subtitle1Element = document.createElement("div");
-      subtitle1Element.className = "subtitle-track subtitle-track-1";
-      subtitle1Element.style.cssText = `
-        padding: 5px 10px;
-        border-radius: 4px;
-        display: none;
-        font-size: ${settings.subtitle1.fontSize}px;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
-        pointer-events: auto;
-        cursor: pointer;
-        background: rgba(0, 0, 0, 0.5);
-        margin: 0 auto;
-        background-color: rgba(0, 255, 0, 0.2); /* Debug background */
-      `;
-      applySubtitleStyles(subtitle1Element, settings.subtitle1);
-      subtitleContainer.appendChild(subtitle1Element);
-
-      subtitle2Element = document.createElement("div");
-      subtitle2Element.className = "subtitle-track subtitle-track-2";
-      subtitle2Element.style.cssText = `
-        padding: 5px 10px;
-        border-radius: 4px;
-        display: none;
-        font-size: ${settings.subtitle2.fontSize}px;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
-        pointer-events: auto;
-        cursor: pointer;
-        background: rgba(0, 0, 0, 0.5);
-        margin: 0 auto;
-        background-color: rgba(0, 0, 255, 0.2); /* Debug background */
-      `;
-      applySubtitleStyles(subtitle2Element, settings.subtitle2);
-      subtitleContainer.appendChild(subtitle2Element);
-
-      log("Created subtitle container elements");
-    }
-
-    // Set up both methods of subtitle extraction
-    setupTextTrackObservers();
-    detectNativeSubtitles();
-
-    // Add video event listeners
-    videoElement.addEventListener("play", onVideoEvent);
-    videoElement.addEventListener("seeked", onVideoEvent);
-    videoElement.addEventListener("timeupdate", updateSubtitleContent);
-
-    // If we're on YouTube, try to load YouTube subtitles
-    if (isYouTube) {
-      loadYouTubeSubtitles();
-    }
-  }
-
-  // Handle video events
-  function onVideoEvent(event) {
-    log("Video event", event.type);
-    // Refresh subtitle detection when video state changes
-    setTimeout(() => {
-      updateSubtitleContent();
-      detectNativeSubtitles();
-
-      // If URL changed (YouTube SPA navigation), reload YouTube subtitles
-      if (isYouTube && event.type === "play") {
-        const videoId = extractYouTubeVideoIdFromUrl(window.location.href);
-        if (videoId) {
-          loadYouTubeSubtitles();
-        }
-      }
-    }, 500);
-  }
-
-  // Apply styles to subtitle elements
-  function applySubtitleStyles(element, subtitleSettings) {
-    element.style.color = subtitleSettings.color;
-    element.style.backgroundColor = hexToRgba(
-      subtitleSettings.background,
-      subtitleSettings.opacity
+    // Position the card
+    const cardRect = card.getBoundingClientRect();
+    const left = Math.max(
+      10,
+      Math.min(window.innerWidth - cardRect.width - 10, x - cardRect.width / 2)
     );
+    const top = y - 100; // 100px above the word span
+
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+    card.style.display = "block";
   }
 
-  // Convert hex color to rgba for opacity
-  function hexToRgba(hex, opacity) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  // Function to hide word card
+  function hideWordCard() {
+    if (!isCardSticky && wordCard) {
+      wordCard.style.display = "none";
+    }
   }
 
-  // Find the main video element on the page
+  // Function to find the video element
   function findVideoElement() {
     // First try to find the largest video
     const videos = Array.from(document.querySelectorAll("video"));
     if (videos.length === 0) return null;
 
-    log("Found video elements", videos.length);
-
     // For YouTube, prefer the main player video
-    if (isYouTube) {
-      const ytVideo = document.querySelector(".html5-main-video");
-      if (ytVideo) {
-        log("Found YouTube main video");
-        return ytVideo;
-      }
+    const ytVideo = document.querySelector(".html5-main-video");
+    if (ytVideo) {
+      return ytVideo;
     }
 
     // Sort by size (height * width) and return the largest
@@ -847,936 +328,263 @@
     return videos[0];
   }
 
-  // Look for native subtitle elements on the page
-  function detectNativeSubtitles() {
-    if (!settings.enabled) return;
-
-    // Common subtitle container selectors for popular streaming platforms
-    const subtitleSelectors = [
-      // YouTube - More specific selectors for YouTube
-      ".ytp-caption-segment",
-      ".caption-window .captions-text .caption-visual-line .caption-visual-text",
-      ".captions-text span",
-      // Netflix
-      ".player-timedtext-text-container",
-      // Amazon Prime
-      ".atvwebplayersdk-captions-text",
-      // Hulu
-      ".closed-caption-container",
-      // Disney+
-      ".atv-subtitle-span",
-      // General video players
-      ".vjs-text-track-display",
-      ".mejs-captions-text",
-      ".fp-captions",
-      // Generic selectors that might contain subtitles
-      '[class*="caption"]',
-      '[class*="subtitle"]',
-      '[id*="caption"]',
-      '[id*="subtitle"]',
-    ];
-
-    let subtitleElements = [];
-
-    // Try each selector
-    for (const selector of subtitleSelectors) {
-      const elements = document.querySelectorAll(selector);
-      if (elements.length > 0) {
-        subtitleElements = [...subtitleElements, ...Array.from(elements)];
-      }
-    }
-
-    if (subtitleElements.length > 0) {
-      log("Found native subtitle elements", subtitleElements.length);
-
-      // Set up observer for each potential subtitle element
-      if (nativeSubtitleObserver) {
-        nativeSubtitleObserver.disconnect();
-      }
-
-      nativeSubtitleObserver = new MutationObserver((mutations) => {
-        // Extract text from the subtitle elements
-        extractNativeSubtitles(subtitleElements);
-      });
-
-      // Start observing the subtitle elements
-      subtitleElements.forEach((element) => {
-        nativeSubtitleObserver.observe(element, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-        });
-      });
-
-      // Initial extraction
-      extractNativeSubtitles(subtitleElements);
-    } else {
-      log("No native subtitle elements found with standard selectors");
-
-      // Special handling for YouTube if no elements found with standard selectors
-      if (isYouTube) {
-        const ytCaptionWindow = document.querySelector(".caption-window");
-        if (ytCaptionWindow) {
-          log("Found YouTube caption window", ytCaptionWindow);
-
-          if (nativeSubtitleObserver) {
-            nativeSubtitleObserver.disconnect();
-          }
-
-          nativeSubtitleObserver = new MutationObserver((mutations) => {
-            const captionTexts = ytCaptionWindow.querySelectorAll(
-              ".captions-text span"
-            );
-            if (captionTexts.length > 0) {
-              let subtitleText = "";
-              captionTexts.forEach((span) => {
-                subtitleText += span.textContent + " ";
-              });
-
-              // Use the extracted text based on the selected source
-              if (
-                settings.subtitle1.source === "cc" ||
-                settings.subtitle1.source.startsWith("youtube_ui_")
-              ) {
-                subtitle1Element.textContent = subtitleText.trim();
-                subtitle1Element.style.display = "inline-block";
-                log("Updated YouTube subtitle 1 text", subtitleText);
-              }
-
-              if (
-                settings.subtitle2.source === "cc" ||
-                settings.subtitle2.source.startsWith("youtube_ui_")
-              ) {
-                subtitle2Element.textContent = subtitleText.trim();
-                subtitle2Element.style.display = "inline-block";
-                log("Updated YouTube subtitle 2 text", subtitleText);
-              }
-            }
-          });
-
-          nativeSubtitleObserver.observe(ytCaptionWindow, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-          });
+  // Function to setup hover events for caption container
+  function setupCaptionHoverEvents() {
+    const captionContainer = document.querySelector(".captions-text");
+    if (captionContainer) {
+      captionContainer.addEventListener("mouseenter", () => {
+        if (videoElement && !videoElement.paused) {
+          videoElement.pause();
         }
-      }
+      });
+      // captionContainer.addEventListener("mouseleave", () => {
+      //   if (videoElement && videoElement.paused) {
+      //     videoElement.play();
+      //   }
+      // });
     }
   }
 
-  // Extract text from native subtitle elements
-  function extractNativeSubtitles(elements) {
-    if (!subtitle1Element || !subtitle2Element) return;
+  // Function to wrap Japanese words in spans
+  function wrapJapaneseWords(element) {
+    if (!element) return;
 
-    // Get text from the first element for subtitle 1 based on source
-    if (
-      settings.subtitle1.source === "cc" &&
-      elements[0] &&
-      elements[0].textContent.trim()
-    ) {
-      subtitle1Element.textContent = elements[0].textContent.trim();
-      subtitle1Element.style.display = "inline-block";
-      log("Updated subtitle 1 text from native", subtitle1Element.textContent);
-    }
+    // Get the text content
+    const text = element.textContent;
+    if (!isJapaneseText(text)) return;
 
-    // Get text from the second element for subtitle 2 based on source
-    if (
-      settings.subtitle2.source === "cc" &&
-      elements[0] &&
-      elements[0].textContent.trim()
-    ) {
-      // If there's a second subtitle element, use it, otherwise use the first one
-      if (elements[1] && elements[1].textContent.trim()) {
-        subtitle2Element.textContent = elements[1].textContent.trim();
-      } else {
-        subtitle2Element.textContent = elements[0].textContent.trim();
-      }
-      subtitle2Element.style.display = "inline-block";
-      log("Updated subtitle 2 text from native", subtitle2Element.textContent);
-    }
-  }
+    // Tokenize the text
+    const tokens = tokenizeJapanese(text);
 
-  // Setup observers for text track changes
-  function setupTextTrackObservers() {
-    if (!videoElement) return;
+    // Create a document fragment to hold our new content
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
 
-    // Check if textTracks is available
-    if (videoElement.textTracks) {
-      log("Setting up textTrack observers", videoElement.textTracks.length);
+    // Process each token
+    tokens.forEach((token) => {
+      const word = token.surface_form;
+      const index = text.indexOf(word, lastIndex);
 
-      // Watch for changes in the textTracks
-      if (subtitleObserver) {
-        subtitleObserver.disconnect();
+      if (index > lastIndex) {
+        // Add any non-Japanese text before this token
+        fragment.appendChild(
+          document.createTextNode(text.slice(lastIndex, index))
+        );
       }
 
-      subtitleObserver = new MutationObserver((mutations) => {
-        updateSubtitleContent();
+      // Create span for the Japanese word
+      const wordSpan = document.createElement("span");
+      wordSpan.textContent = word;
+      wordSpan.className = "bundai-token";
+      wordSpan.style.cssText = `
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+      `;
+
+      // Add hover events
+      wordSpan.addEventListener("mouseenter", (e) => {
+        const rect = wordSpan.getBoundingClientRect();
+        showWordCard(word, rect.left + rect.width / 2, rect.top - 100);
+      });
+      wordSpan.addEventListener("mouseleave", hideWordCard);
+
+      // Add click event for sticky card
+      wordSpan.addEventListener("click", (e) => {
+        e.stopPropagation();
+        isCardSticky = true;
+        const rect = wordSpan.getBoundingClientRect();
+        showWordCard(word, rect.left + rect.width / 2, rect.top - 100);
       });
 
-      // Start observing textTracks
-      try {
-        subtitleObserver.observe(videoElement.textTracks, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          characterData: true,
-        });
-      } catch (e) {
-        log("Error observing textTracks", e);
-      }
+      fragment.appendChild(wordSpan);
+      lastIndex = index + word.length;
+    });
 
-      // Set up initial state
-      setupTextTracks();
-
-      // Also listen for cuechange events on each track
-      try {
-        Array.from(videoElement.textTracks).forEach((track) => {
-          track.addEventListener("cuechange", updateSubtitleContent);
-        });
-      } catch (e) {
-        log("Error adding cuechange listeners", e);
-      }
-    } else {
-      log("No textTracks found on video element");
+    // Add any remaining text
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
     }
 
-    // Listen for the 'timeupdate' event as a fallback
-    videoElement.addEventListener("timeupdate", () => {
-      if (!subtitle1Element.textContent && !subtitle2Element.textContent) {
-        updateSubtitleContent();
-      }
-    });
+    // Replace the content
+    element.textContent = "";
+    element.appendChild(fragment);
   }
 
-  // Setup the text tracks based on selected sources
-  function setupTextTracks() {
-    if (!videoElement || !videoElement.textTracks) return;
+  // Function to process caption segments
+  function processCaptionSegments() {
+    const segments = document.querySelectorAll(".ytp-caption-segment");
+    segments.forEach((segment) => {
+      wrapJapaneseWords(segment);
+    });
+    // Setup hover events after processing segments
+    setupCaptionHoverEvents();
+  }
 
-    const tracks = Array.from(videoElement.textTracks);
-    log("Available text tracks", tracks.length);
+  // Function to log captions when they change
+  function logCaptions() {
+    const currentText = getCaptionText();
 
-    if (tracks.length === 0) {
-      // No tracks found, retry later
-      setTimeout(setupTextTracks, 2000);
+    if (currentText && currentText !== lastCaptionText) {
+      if (isJapaneseText(currentText)) {
+        const tokens = tokenizeJapanese(currentText);
+        console.log("Japanese Caption:", currentText);
+        console.log(
+          "Tokens:",
+          tokens.map((token) => token.surface_form)
+        );
+
+        // Process the caption segments
+        processCaptionSegments();
+      }
+      lastCaptionText = currentText;
+    }
+  }
+
+  // Start monitoring captions
+  function startMonitoring() {
+    if (isMonitoring) return;
+
+    // Find video element
+    videoElement = findVideoElement();
+    if (!videoElement) {
+      console.log("No video element found");
       return;
     }
 
-    // Log details of each track
-    tracks.forEach((track, index) => {
-      log(
-        `Track ${index}: kind=${track.kind}, label=${track.label}, language=${track.language}, mode=${track.mode}`
-      );
-    });
+    isMonitoring = true;
+    console.log("YouTube Caption Logger started");
 
-    // Disable all tracks first to avoid browser's native subtitle display
-    tracks.forEach((track) => {
-      try {
-        track.mode = "hidden";
-      } catch (e) {
-        log("Error setting track mode", e);
+    // Check for captions every 500ms
+    const interval = setInterval(() => {
+      // Stop if we're no longer on a YouTube video page
+      if (!window.location.href.includes("youtube.com/watch")) {
+        clearInterval(interval);
+        isMonitoring = false;
+        console.log("YouTube Caption Logger stopped");
+        return;
       }
-    });
 
-    // Reset active tracks
-    activeTextTracks = {};
-
-    // Map source selection to actual track
-    function findTrackBySource(source) {
-      // Handle different source types
-      if (source === "cc") {
-        // Try to find a CC track (often the first or has 'captions' kind)
-        return tracks.find((t) => t.kind === "captions") || tracks[0];
-      } else if (source.startsWith("youtube_")) {
-        // Find YouTube track by ID
-        return tracks.find(
-          (t) => t.youtubeTrack && t.youtubeTrack.id === source
-        );
-      } else if (source.startsWith("subtitle")) {
-        // Get track by index - subtitle1 would be tracks[0], subtitle2 would be tracks[1], etc.
-        const index = parseInt(source.replace("subtitle", "")) - 1;
-        return tracks[index >= 0 && index < tracks.length ? index : 0] || null;
-      }
-      return null;
-    }
-
-    // Set up active tracks
-    const track1 = findTrackBySource(settings.subtitle1.source);
-    const track2 = findTrackBySource(settings.subtitle2.source);
-
-    if (track1) {
-      try {
-        track1.mode = "hidden";
-        activeTextTracks.track1 = track1;
-        log(
-          "Selected track 1",
-          track1.label || track1.language || "Unnamed track"
-        );
-      } catch (e) {
-        log("Error setting track1", e);
-      }
-    }
-
-    if (track2) {
-      try {
-        track2.mode = "hidden";
-        activeTextTracks.track2 = track2;
-        log(
-          "Selected track 2",
-          track2.label || track2.language || "Unnamed track"
-        );
-      } catch (e) {
-        log("Error setting track2", e);
-      }
-    }
-
-    // Initial update
-    updateSubtitleContent();
+      logCaptions();
+    }, 500);
   }
 
-  // Clean word of special characters
-  function cleanWord(word) {
-    return word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]'"<>?]/g, "");
+  // Function to extract caption text from the container
+  function getCaptionText() {
+    const captionContainer = document.querySelector(".captions-text");
+    if (!captionContainer) return null;
+
+    const segments = captionContainer.querySelectorAll(".ytp-caption-segment");
+    if (segments.length === 0) return null;
+
+    const text = Array.from(segments)
+      .map((segment) => segment.textContent.trim())
+      .filter((text) => text.length > 0)
+      .join(" ");
+
+    return text;
   }
 
-  // Returns the first object whose kanji array includes the given kanji keyword
-  function findObjectByKanji(kanjiKeyword) {
-    return window.jmdictIndex[kanjiKeyword];
-  }
-
-  // function findObjectByKana(kanaKeyword) {
-  //   if (!window.jmdictData || !kanaKeyword) return null;
-
-  //   return window.jmdictData.find(entry => {
-  //     if (Array.isArray(entry.kana)) {
-  //       return entry.kana.some(kana => kana === kanaKeyword);
-  //     }
-  //     return false;
-  //   });
-  // }
-  function findObjectByKana(kanaKeyword) {
-    return window.jmdictKanaIndex[kanaKeyword] || null;
-  }
-
-  // Show the word card
-  async function showWordCard(word, x, y, shouldStay = false) {
-    if (!word) return;
-
-    // Wait for jmdict to be loaded if not already
-    if (!window.jmdictLoaded) {
-      await new Promise((resolve) => {
-        const check = () =>
-          window.jmdictLoaded ? resolve() : setTimeout(check, 50);
-        check();
-      });
-    }
-
-    // Tokenize the word/text
-    const tokens = await tokenizeText(word);
-    if (tokens.length === 0) return;
-
-    const card = createWordCard();
-
-    // Calculate position to keep card in viewport
-    const cardRect = card.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    let left = x + 20;
-    let top = y - cardRect.height - 20;
-
-    // Adjust if card would go off right edge
-    if (left + cardRect.width > viewportWidth) {
-      left = x - cardRect.width - 20;
-    }
-
-    // Adjust if card would go off top edge
-    if (top < 0) {
-      top = y + 20;
-    }
-
-    // Position the card
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
-
-    // Create content container
-    const contentContainer =
-      card.querySelector(".content-container") || document.createElement("div");
-    contentContainer.className = "content-container";
-    contentContainer.style.cssText = `
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    `;
-
-    // Clear previous content
-    contentContainer.innerHTML = "";
-
-    // Add the token to the card (now we only show one token)
-    const token = tokens[0];
-    const tokenContainer = document.createElement("div");
-    tokenContainer.style.cssText = `
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    `;
-
-    // Show the main word at the top
-    const wordElement = document.createElement("div");
-    wordElement.className = "word";
-    wordElement.style.fontWeight = "bold";
-    wordElement.style.fontSize = "1.2em";
-    wordElement.textContent = token.word;
-    tokenContainer.appendChild(wordElement);
-
-    // Lookup in JMdict
-    let entry = null;
-    if (window.jmdictData) {
-      entry = findObjectByKanji(token.word);
-      if (!entry) {
-        entry = findObjectByKana(token.word);
-      }
-      if (!entry && token.reading) {
-        entry = findObjectByKana(token.reading);
-      }
-    }
-
-    if (entry) {
-      // Show kana (all readings)
-      if (Array.isArray(entry.kana) && entry.kana.length > 0) {
-        const kanaContainer = document.createElement("div");
-        kanaContainer.style.cssText = `
-          display: flex;
-          flex-wrap: wrap;
-          gap: 4px;
-          margin: 4px 0;
-        `;
-
-        const kanaLabel = document.createElement("span");
-        kanaLabel.textContent = "Kana: ";
-        kanaLabel.style.cssText = `
-          font-size: 0.9em;
-          color: ${settings.wordCard.textColor};
-          opacity: 0.8;
-          margin-right: 4px;
-          align-self: center;
-        `;
-        kanaContainer.appendChild(kanaLabel);
-
-        entry.kana.forEach((kana) => {
-          const kanaChip = document.createElement("span");
-          kanaChip.className = "kana-chip";
-          kanaChip.textContent = kana;
-          kanaChip.style.cssText = `
-            background: rgba(255, 255, 255, 0.15);
-            color: ${settings.wordCard.textColor};
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-          `;
-          kanaContainer.appendChild(kanaChip);
+  // Initialize Kuromoji tokenizer
+  function initializeTokenizer() {
+    return new Promise((resolve, reject) => {
+      kuromoji
+        .builder({
+          dicPath: chrome.runtime.getURL("node_modules/kuromoji/dict/"),
+        })
+        .build((err, _tokenizer) => {
+          if (err) {
+            console.error("Kuromoji initialization error:", err);
+            reject(err);
+            return;
+          }
+          tokenizer = _tokenizer;
+          resolve();
         });
+    });
+  }
 
-        tokenContainer.appendChild(kanaContainer);
+  // Function to detect if text is Japanese
+  function isJapaneseText(text) {
+    // Check if text contains Japanese characters (Hiragana, Katakana, or Kanji)
+    return /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(text);
+  }
+
+  // Function to tokenize Japanese text
+  function tokenizeJapanese(text) {
+    if (!tokenizer) return [];
+    return tokenizer.tokenize(text);
+  }
+
+  // Function to clean text by removing punctuation and special characters
+  function cleanText(text) {
+    // Remove punctuation, special characters, but keep Japanese characters
+    return text
+      .replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\s]/g, "")
+      .replace(/\s+/g, " ") // Replace multiple spaces with single space
+      .trim();
+  }
+
+  // Wait for the page to load and start monitoring
+  async function initialize() {
+    // Check if we're on a YouTube video page
+    if (!window.location.href.includes("youtube.com/watch")) {
+      return;
+    }
+
+    // Initialize Kuromoji
+    try {
+      await initializeTokenizer();
+    } catch (error) {
+      console.error("Failed to initialize Kuromoji:", error);
+      return;
+    }
+
+    // Wait for the video player to load
+    const checkForPlayer = setInterval(() => {
+      const player = document.querySelector("#movie_player");
+      if (player) {
+        clearInterval(checkForPlayer);
+
+        // Wait a bit more for captions to potentially load
+        setTimeout(() => {
+          startMonitoring();
+        }, 2000);
       }
-      // Show meanings (gloss array from all senses)
-      if (Array.isArray(entry.senses) && entry.senses.length > 0) {
-        const glosses = entry.senses
-          .flatMap((sense) => sense.gloss)
-          .filter(Boolean);
-        if (glosses.length > 0) {
-          const meaningContainer = document.createElement("div");
-          meaningContainer.style.cssText = `
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            margin: 4px 0;
-          `;
+    }, 1000);
 
-          const meaningLabel = document.createElement("span");
-          meaningLabel.textContent = "Meanings:";
-          meaningLabel.style.cssText = `
-            font-size: 0.9em;
-            color: ${settings.wordCard.textColor};
-            opacity: 0.8;
-            margin-bottom: 2px;
-          `;
-          meaningContainer.appendChild(meaningLabel);
-
-          const chipsContainer = document.createElement("div");
-          chipsContainer.style.cssText = `
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-          `;
-
-          glosses.forEach((gloss) => {
-            const meaningChip = document.createElement("span");
-            meaningChip.className = "meaning-chip";
-            meaningChip.textContent = gloss;
-            meaningChip.style.cssText = `
-              background: rgba(100, 149, 237, 0.3);
-              color: ${settings.wordCard.textColor};
-              padding: 3px 10px;
-              border-radius: 14px;
-              font-size: 0.8em;
-              border: 1px solid rgba(100, 149, 237, 0.4);
-              line-height: 1.2;
-            `;
-            chipsContainer.appendChild(meaningChip);
-          });
-
-          meaningContainer.appendChild(chipsContainer);
-          tokenContainer.appendChild(meaningContainer);
-        }
-      }
-    }
-
-    contentContainer.appendChild(tokenContainer);
-
-    // Add content container to card if not already present
-    if (!card.querySelector(".content-container")) {
-      card.appendChild(contentContainer);
-    }
-
-    // Show the card with animation
-    card.style.display = "block";
-    card.style.opacity = "0";
-    card.style.transform = "translateY(10px)";
-
-    // Force reflow
-    card.offsetHeight;
-
-    card.style.opacity = "1";
-    card.style.transform = "translateY(0)";
-
-    // Set stay flag
-    card.dataset.stay = shouldStay ? "true" : "false";
+    // Stop checking after 10 seconds if player not found
+    setTimeout(() => {
+      clearInterval(checkForPlayer);
+    }, 10000);
   }
 
-  // Hide the word card
-  function hideWordCard() {
-    const card = document.querySelector(".word-card");
-    if (card) {
-      // Only hide if the card is not set to stay
-      if (card.dataset.stay !== "true") {
-        card.style.opacity = "0";
-        card.style.transform = "translateY(10px)";
-      }
+  // Handle YouTube's single-page app navigation
+  let currentUrl = window.location.href;
+
+  // Observer for URL changes (YouTube SPA navigation)
+  const observer = new MutationObserver(() => {
+    if (currentUrl !== window.location.href) {
+      currentUrl = window.location.href;
+      lastCaptionText = "";
+      isMonitoring = false;
+
+      // Wait a bit for the new page to load, then initialize
+      setTimeout(initialize, 1000);
     }
+  });
+
+  // Start observing
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  // Initial setup
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initialize);
+  } else {
+    initialize();
   }
-
-  // Close the word card
-  function closeWordCard() {
-    const card = document.querySelector(".word-card");
-    if (card) {
-      card.dataset.stay = "false";
-      card.style.opacity = "0";
-      card.style.transform = "translateY(10px)";
-    }
-  }
-
-  // Create and manage the floating word card
-  function createWordCard() {
-    let card = document.querySelector(".word-card");
-
-    if (!card) {
-      card = document.createElement("div");
-      card.className = "word-card";
-      card.style.cssText = `
-        position: fixed;
-        z-index: 99999;
-        background: ${hexToRgba(
-        settings.wordCard.backgroundColor,
-        settings.wordCard.backgroundOpacity
-      )};
-        color: ${settings.wordCard.textColor};
-        border-radius: ${settings.wordCard.borderRadius}px;
-        padding: ${settings.wordCard.padding}px;
-        box-shadow: 0 4px ${settings.wordCard.shadowIntensity
-        }px rgba(0, 0, 0, 0.3);
-        min-width: 200px;
-        max-width: 300px;
-        font-size: 16px;
-        line-height: 1.4;
-        opacity: 0;
-        transform: translateY(10px);
-        transition: opacity 0.2s ease, transform 0.2s ease;
-        display: none;
-      `;
-
-      // Create header with close button
-      const header = document.createElement("div");
-      header.style.cssText = `
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        margin-bottom: 8px;
-      `;
-
-      // Create close button
-      const closeButton = document.createElement("button");
-      closeButton.innerHTML = "×";
-      closeButton.style.cssText = `
-        background: rgba(0,0,0,0.25);
-        border: none;
-        color: ${settings.wordCard.textColor};
-        font-size: 22px;
-        cursor: pointer;
-        padding: 4px 10px;
-        border-radius: 50%;
-        opacity: 0.8;
-        margin-left: auto;
-        transition: opacity 0.2s, background 0.2s;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.12);
-        outline: none;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      `;
-      closeButton.onmouseover = () => {
-        closeButton.style.opacity = "1";
-        closeButton.style.background = "rgba(0,0,0,0.4)";
-      };
-      closeButton.onmouseout = () => {
-        closeButton.style.opacity = "0.8";
-        closeButton.style.background = "rgba(0,0,0,0.25)";
-      };
-      closeButton.onclick = closeWordCard;
-
-      header.appendChild(closeButton);
-      card.appendChild(header);
-
-      document.body.appendChild(card);
-    }
-
-    return card;
-  }
-
-  // Helper to check if a track is Japanese
-  function isJapaneseTrack(track) {
-    if (!track) return false;
-    // Check label and languageCode for Japanese
-    return (
-      /japanese|日本語|ja[-_]/i.test(track.label || "") ||
-      /ja[-_]/i.test(track.language || "")
-    );
-  }
-
-  // Update the content of the subtitle elements from text tracks
-  async function updateSubtitleContent() {
-    if (!subtitle1Element || !subtitle2Element) return;
-
-    // Update subtitle 1
-    if (activeTextTracks.track1) {
-      // Only show if Japanese
-      if (!isJapaneseTrack(activeTextTracks.track1)) {
-        subtitle1Element.style.display = "none";
-      } else {
-        try {
-          const hasCues =
-            activeTextTracks.track1.activeCues &&
-            activeTextTracks.track1.activeCues.length > 0;
-          if (hasCues) {
-            const cue = activeTextTracks.track1.activeCues[0];
-            if (cue.text) {
-              log("Processing subtitle text:", cue.text);
-
-              // Check if the text is Japanese
-              if (isJapaneseText(cue.text)) {
-                log("Detected Japanese text");
-                // For Japanese text, we'll tokenize and wrap each token
-                const tokens = await tokenizeText(cue.text);
-                log("Tokenized Japanese text:", tokens);
-
-                const wrappedText = tokens
-                  .map(
-                    (token) =>
-                      `<span class="subtitle-word" data-reading="${token.reading || ""
-                      }">${token.word}</span>`
-                  )
-                  .join("");
-                subtitle1Element.innerHTML = wrappedText;
-                subtitle1Element.style.display = "inline-block";
-              } else {
-                // For non-Japanese text, use simple word splitting
-                const wrappedText = cue.text
-                  .split(/\s+/)
-                  .map((word) => `<span class="subtitle-word">${word}</span>`)
-                  .join(" ");
-                subtitle1Element.innerHTML = wrappedText;
-                subtitle1Element.style.display = "inline-block";
-              }
-
-              // Add hover and click listeners to each word
-              subtitle1Element
-                .querySelectorAll(".subtitle-word")
-                .forEach((span) => {
-                  span.onmouseover = function (event) {
-                    log("Mouse over word:", this.textContent);
-                    const word = this.textContent;
-                    if (word) {
-                      showWordCard(word, event.clientX, event.clientY);
-                    }
-                  };
-                  span.onmouseout = function () {
-                    const card = document.querySelector(".word-card");
-                    if (card && card.dataset.stay !== "true") {
-                      hideWordCard();
-                    }
-                  };
-                  span.onclick = function (event) {
-                    const word = this.textContent;
-                    if (word) {
-                      showWordCard(word, event.clientX, event.clientY, true);
-                    }
-                  };
-                });
-            }
-          } else {
-            subtitle1Element.style.display = "none";
-          }
-        } catch (e) {
-          console.error("Error updating subtitle 1:", e);
-        }
-      }
-    } else {
-      subtitle1Element.style.display = "none";
-    }
-
-    // Update subtitle 2
-    if (activeTextTracks.track2) {
-      try {
-        const hasCues =
-          activeTextTracks.track2.activeCues &&
-          activeTextTracks.track2.activeCues.length > 0;
-        if (hasCues) {
-          const cue = activeTextTracks.track2.activeCues[0];
-          if (cue.text) {
-            log("Processing subtitle text:", cue.text);
-
-            // Check if the text is Japanese
-            if (isJapaneseText(cue.text)) {
-              log("Detected Japanese text");
-              // For Japanese text, we'll tokenize and wrap each token
-              const tokens = await tokenizeText(cue.text);
-              log("Tokenized Japanese text:", tokens);
-
-              const wrappedText = tokens
-                .map(
-                  (token) =>
-                    `<span class="subtitle-word" data-reading="${token.reading || ""
-                    }">${token.word}</span>`
-                )
-                .join("");
-              subtitle2Element.innerHTML = wrappedText;
-              subtitle2Element.style.display = "inline-block";
-            } else {
-              // For non-Japanese text, use simple word splitting
-              const wrappedText = cue.text
-                .split(/\s+/)
-                .map((word) => `<span class="subtitle-word">${word}</span>`)
-                .join(" ");
-              subtitle2Element.innerHTML = wrappedText;
-              subtitle2Element.style.display = "inline-block";
-            }
-
-            // Add hover and click listeners to each word
-            subtitle2Element
-              .querySelectorAll(".subtitle-word")
-              .forEach((span) => {
-                span.onmouseover = function (event) {
-                  log("Mouse over word:", this.textContent);
-                  const word = this.textContent;
-                  if (word) {
-                    showWordCard(word, event.clientX, event.clientY);
-                  }
-                };
-                span.onmouseout = function () {
-                  const card = document.querySelector(".word-card");
-                  if (card && card.dataset.stay !== "true") {
-                    hideWordCard();
-                  }
-                };
-                span.onclick = function (event) {
-                  const word = this.textContent;
-                  if (word) {
-                    showWordCard(word, event.clientX, event.clientY, true);
-                  }
-                };
-              });
-          }
-        } else {
-          subtitle2Element.style.display = "none";
-        }
-      } catch (e) {
-        console.error("Error updating subtitle 2:", e);
-      }
-    }
-
-    // Check for cases where second subtitle is a copy of the first
-    if (
-      settings.subtitle2.source === "subtitle1" &&
-      subtitle1Element.textContent
-    ) {
-      const wrappedText = subtitle1Element.innerHTML;
-      subtitle2Element.innerHTML = wrappedText;
-      subtitle2Element.style.display = "inline-block";
-
-      // Add hover and click listeners to each word in subtitle 2
-      subtitle2Element.querySelectorAll(".subtitle-word").forEach((span) => {
-        span.onmouseover = function (event) {
-          const cleanedWord = cleanWord(this.textContent);
-          if (cleanedWord) {
-            showWordCard(cleanedWord, event.clientX, event.clientY);
-          }
-        };
-        span.onmouseout = hideWordCard;
-        span.onclick = function (event) {
-          const cleanedWord = cleanWord(this.textContent);
-          if (cleanedWord) {
-            showWordCard(cleanedWord, event.clientX, event.clientY, true);
-          }
-        };
-      });
-    }
-  }
-
-  // Update the display based on new settings
-  function updateSubtitleDisplay() {
-    if (!subtitleContainer || !subtitle1Element || !subtitle2Element) return;
-
-    // Update styles
-    applySubtitleStyles(subtitle1Element, settings.subtitle1);
-    applySubtitleStyles(subtitle2Element, settings.subtitle2);
-
-    // Update position
-    subtitleContainer.style.bottom = `${settings.position}%`;
-    subtitleContainer.style.gap = `${settings.gap}px`;
-
-    // Update word card if it exists
-    if (window.wordCard) {
-      window.wordCard.style.background = hexToRgba(
-        settings.wordCard.backgroundColor,
-        settings.wordCard.backgroundOpacity
-      );
-      window.wordCard.style.color = settings.wordCard.textColor;
-      window.wordCard.style.borderRadius = `${settings.wordCard.borderRadius}px`;
-      window.wordCard.style.padding = `${settings.wordCard.padding}px`;
-      window.wordCard.style.boxShadow = `0 4px ${settings.wordCard.shadowIntensity}px rgba(0, 0, 0, 0.3)`;
-
-      // Update close button color
-      const closeButton = window.wordCard.querySelector("button");
-      if (closeButton) {
-        closeButton.style.color = settings.wordCard.textColor;
-      }
-    }
-
-    // Force refresh active tracks
-    setupTextTracks();
-
-    // Force refresh of subtitle content
-    updateSubtitleContent();
-
-    log("Updated subtitle display with new settings");
-  }
-
-  // Remove the subtitle display
-  function removeSubtitleDisplay() {
-    log("Removing subtitle display");
-
-    // Clean up event listeners
-    if (videoElement) {
-      videoElement.removeEventListener("play", onVideoEvent);
-      videoElement.removeEventListener("seeked", onVideoEvent);
-      videoElement.removeEventListener("timeupdate", updateSubtitleContent);
-    }
-
-    // Remove observers
-    if (subtitleObserver) {
-      subtitleObserver.disconnect();
-    }
-
-    if (nativeSubtitleObserver) {
-      nativeSubtitleObserver.disconnect();
-    }
-
-    if (domObserver) {
-      domObserver.disconnect();
-    }
-
-    // Remove subtitle elements
-    if (subtitleContainer) {
-      subtitleContainer.remove();
-      subtitleContainer = null;
-      subtitle1Element = null;
-      subtitle2Element = null;
-    }
-
-    // Reset variables
-    activeTextTracks = {};
-
-    log("Subtitle display removed");
-  }
-
-  function updateSubtitleStyles(settings) {
-    const subtitle1 = document.querySelector(".subtitle-track-1");
-    const subtitle2 = document.querySelector(".subtitle-track-2");
-
-    if (subtitle1) {
-      subtitle1.style.color = settings.subtitle1.color;
-      subtitle1.style.backgroundColor = hexToRgba(
-        settings.subtitle1.background,
-        settings.subtitle1.opacity
-      );
-      subtitle1.style.fontSize = `${settings.subtitle1.fontSize}px`;
-    }
-
-    if (subtitle2) {
-      subtitle2.style.color = settings.subtitle2.color;
-      subtitle2.style.backgroundColor = hexToRgba(
-        settings.subtitle2.background,
-        settings.subtitle2.opacity
-      );
-      subtitle2.style.fontSize = `${settings.subtitle2.fontSize}px`;
-    }
-
-    // If source settings are included, update the tracks
-    if (settings.subtitle1 && settings.subtitle1.source) {
-      setupTextTracks();
-      updateSubtitleContent();
-    }
-  }
-
-  // Handle hover events on subtitle elements
-  function handleSubtitleHover(event) {
-    const text = event.target.textContent.trim();
-    if (!text) return;
-
-    // Get mouse position
-    const x = event.clientX;
-    const y = event.clientY;
-
-    // Show word card with the text
-    showWordCard(text, x, y);
-  }
-
-  // Add this at the top-level IIFE or before any subtitle-word spans are created
-  (function injectSubtitleWordHoverStyle() {
-    if (!document.getElementById("subtitle-word-hover-style")) {
-      const style = document.createElement("style");
-      style.id = "subtitle-word-hover-style";
-      style.textContent = `
-        .subtitle-word:hover {
-          background-color: rgba(255,255,255,0.3) !important;
-          border-radius: 4px;
-          transition: background 0.15s;
-        }
-      `;
-      document.head.appendChild(style);
-    }
-  })();
-
-  // Initialize when the content script is loaded
-  initialize();
 })();
