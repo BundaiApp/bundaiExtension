@@ -2,7 +2,7 @@
   "name": "bundai-extension-plasmo",
   "displayName": "Bundai extension plasmo",
   "version": "0.0.1",
-  "description": "A Japanese language learning, chromium based web extension\\",
+  "description": "A Japanese language learning, chromium based web extension",
   "author": "bundai",
   "scripts": {
     "dev": "plasmo dev",
@@ -10,6 +10,7 @@
     "package": "plasmo package"
   },
   "dependencies": {
+    "kuromoji": "^0.1.2",
     "plasmo": "0.90.5",
     "react": "18.2.0",
     "react-dom": "18.2.0"
@@ -25,7 +26,18 @@
   },
   "manifest": {
     "host_permissions": [
-      "https://*/*"
+      "*://*.youtube.com/*"
+    ],
+    "web_accessible_resources": [
+      {
+        "resources": [
+          "node_modules/kuromoji/dict/*.dat.gz",
+          "assets/data/japanese/jmdict-simplified-flat-full.json"
+        ],
+        "matches": [
+          "*://*.youtube.com/*"
+        ]
+      }
     ]
   }
 }
