@@ -41,16 +41,33 @@ declare global {
 // WordCard Component
 interface WordCardProps {
     word: string
-    x: number
-    y: number
+    mouseX: number
     isVisible: boolean
     isSticky: boolean
     onClose: () => void
 }
 
-const WordCard: React.FC<WordCardProps> = ({ word, x, y, isVisible, isSticky, onClose }) => {
+const WordCard: React.FC<WordCardProps> = ({ word, mouseX, isVisible, isSticky, onClose }) => {
     const [entry, setEntry] = useState<JMDictEntry | null>(null)
     const [isLoading, setIsLoading] = useState(true)
+    const [containerRect, setContainerRect] = useState<DOMRect | null>(null)
+    const [cardHeight, setCardHeight] = useState<number>(0)
+    const cardRef = useRef<HTMLDivElement>(null)
+
+    useEffect(() => {
+        // Find subtitle container position
+        const captionContainer = document.querySelector('.captions-text')
+        if (captionContainer) {
+            setContainerRect(captionContainer.getBoundingClientRect())
+        }
+    }, [isVisible])
+
+    useEffect(() => {
+        // Measure card height after render
+        if (isVisible && cardRef.current) {
+            setCardHeight(cardRef.current.offsetHeight)
+        }
+    }, [isVisible, entry, isLoading, word])
 
     useEffect(() => {
         const loadEntry = async () => {
@@ -74,21 +91,32 @@ const WordCard: React.FC<WordCardProps> = ({ word, x, y, isVisible, isSticky, on
             setIsLoading(false)
         }
 
+        setIsLoading(true)
+        setEntry(null)
         loadEntry()
     }, [word])
 
-    if (!isVisible) return null
+    if (!isVisible || !containerRect) return null
+
+    // Calculate position: above the subtitle container, x based on mouseX (clamped), y based on dynamic card height
+    const cardWidth = 300
+    const margin = 12
+    let left = mouseX - cardWidth / 2
+    // Clamp left to container bounds
+    left = Math.max(containerRect.left, Math.min(left, containerRect.right - cardWidth))
+    const top = containerRect.top - cardHeight - margin // dynamic height
 
     const cardStyle: React.CSSProperties = {
         position: 'fixed',
-        left: Math.max(10, Math.min(window.innerWidth - 300 - 10, x - 150)),
-        top: y - 100,
+        left,
+        top,
         zIndex: 999999,
         pointerEvents: 'auto'
     }
 
     return (
         <div 
+            ref={cardRef}
             style={cardStyle}
         >
             <div className="bg-yellow-400 text-black rounded-lg p-4 shadow-lg min-w-[200px] max-w-[300px] text-lg leading-relaxed border-2 border-black relative">
@@ -98,9 +126,7 @@ const WordCard: React.FC<WordCardProps> = ({ word, x, y, isVisible, isSticky, on
                 >
                     ×
                 </button>
-                
                 <div className="text-2xl font-extrabold mb-2">{word}</div>
-                
                 {isLoading ? (
                     <div className="text-lg opacity-70">Loading...</div>
                 ) : entry ? (
@@ -112,8 +138,8 @@ const WordCard: React.FC<WordCardProps> = ({ word, x, y, isVisible, isSticky, on
                                     {entry.kanji
                                         .filter(k => typeof k === "string" && /[\u4E00-\u9FAF]/.test(k))
                                         .map((kanji, index) => (
-                                            <span 
-                                                key={index} 
+                                            <span
+                                                key={index}
                                                 className="inline-block bg-black text-yellow-300 px-3 py-1 rounded-xl text-xl border border-yellow-600 mr-2 mb-2"
                                             >
                                                 {kanji}
@@ -122,7 +148,6 @@ const WordCard: React.FC<WordCardProps> = ({ word, x, y, isVisible, isSticky, on
                                 </div>
                             </div>
                         )}
-                        
                         {entry.senses && entry.senses.length > 0 && (
                             <div className="my-2">
                                 <div className="text-lg opacity-80 mb-1">Meanings:</div>
@@ -131,8 +156,8 @@ const WordCard: React.FC<WordCardProps> = ({ word, x, y, isVisible, isSticky, on
                                         .flatMap(sense => sense.gloss)
                                         .filter(Boolean)
                                         .map((gloss, index) => (
-                                            <span 
-                                                key={index} 
+                                            <span
+                                                key={index}
                                                 className="inline-block bg-black text-yellow-200 px-3 py-1 rounded-2xl text-lg border border-yellow-600 mr-2 mb-2"
                                             >
                                                 {gloss}
@@ -158,14 +183,12 @@ const CaptionEnhancer: React.FC = () => {
     const [lastCaptionText, setLastCaptionText] = useState("")
     const [wordCard, setWordCard] = useState<{
         word: string
-        x: number
-        y: number
+        mouseX: number
         isVisible: boolean
         isSticky: boolean
     }>({
         word: "",
-        x: 0,
-        y: 0,
+        mouseX: 0,
         isVisible: false,
         isSticky: false
     })
@@ -263,11 +286,10 @@ const CaptionEnhancer: React.FC = () => {
     }
 
     // Word card handlers
-    const handleWordHover = (word: string, x: number, y: number) => {
+    const handleWordHover = (word: string, mouseX: number) => {
         setWordCard({
             word,
-            x,
-            y,
+            mouseX,
             isVisible: true,
             isSticky: false
         })
@@ -280,11 +302,10 @@ const CaptionEnhancer: React.FC = () => {
         }))
     }
 
-    const handleWordClick = (word: string, x: number, y: number) => {
+    const handleWordClick = (word: string, mouseX: number) => {
         setWordCard({
             word,
-            x,
-            y,
+            mouseX,
             isVisible: true,
             isSticky: true
         })
@@ -302,13 +323,13 @@ const CaptionEnhancer: React.FC = () => {
     const createTokenizedWord = (token: Token, index: number) => {
         const handleMouseEnter = (e: React.MouseEvent) => {
             const rect = (e.target as HTMLElement).getBoundingClientRect()
-            handleWordHover(token.surface_form, rect.left + rect.width / 2, rect.top)
+            handleWordHover(token.surface_form, rect.left + rect.width / 2)
         }
 
         const handleClick = (e: React.MouseEvent) => {
             e.stopPropagation()
             const rect = (e.target as HTMLElement).getBoundingClientRect()
-            handleWordClick(token.surface_form, rect.left + rect.width / 2, rect.top)
+            handleWordClick(token.surface_form, rect.left + rect.width / 2)
         }
 
         return (
@@ -351,7 +372,7 @@ const CaptionEnhancer: React.FC = () => {
 
                 wordElement.addEventListener("mouseenter", (e) => {
                     const rect = (e.target as HTMLElement).getBoundingClientRect()
-                    handleWordHover(word, rect.left + rect.width / 2, rect.top)
+                    handleWordHover(word, rect.left + rect.width / 2)
                 })
 
                 wordElement.addEventListener("mouseleave", handleWordLeave)
@@ -359,7 +380,7 @@ const CaptionEnhancer: React.FC = () => {
                 wordElement.addEventListener("click", (e) => {
                     e.stopPropagation()
                     const rect = (e.target as HTMLElement).getBoundingClientRect()
-                    handleWordClick(word, rect.left + rect.width / 2, rect.top)
+                    handleWordClick(word, rect.left + rect.width / 2)
                 })
 
                 // Add styling
@@ -484,8 +505,7 @@ const CaptionEnhancer: React.FC = () => {
     return (
         <WordCard
             word={wordCard.word}
-            x={wordCard.x}
-            y={wordCard.y}
+            mouseX={wordCard.mouseX}
             isVisible={wordCard.isVisible}
             isSticky={wordCard.isSticky}
             onClose={handleCardClose}
