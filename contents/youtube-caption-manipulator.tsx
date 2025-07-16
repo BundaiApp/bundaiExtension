@@ -192,11 +192,45 @@ const CaptionEnhancer: React.FC = () => {
         isVisible: false,
         isSticky: false
     })
-
+    const [enabled, setEnabled] = useState(true)
     const intervalRef = useRef<NodeJS.Timeout | null>(null)
+    const cleanupListenersRef = useRef<(() => void) | null>(null)
 
-    // Initialize everything
+    // Check extension enabled state on mount
     useEffect(() => {
+        chrome.storage.local.get(["extensionEnabled"], (result) => {
+            setEnabled(result.extensionEnabled !== false) // default to true
+        })
+        // Listen for changes to extensionEnabled
+        const handleStorageChange = (changes, area) => {
+            if (area === "local" && changes.extensionEnabled) {
+                setEnabled(changes.extensionEnabled.newValue !== false)
+            }
+        }
+        chrome.storage.onChanged.addListener(handleStorageChange)
+        return () => {
+            chrome.storage.onChanged.removeListener(handleStorageChange)
+        }
+    }, [])
+
+    // Initialization and cleanup based on enabled state
+    useEffect(() => {
+        if (!enabled) {
+            // Clean up everything if disabled
+            setIsInitialized(false)
+            setLastCaptionText("")
+            setWordCard({ word: "", mouseX: 0, isVisible: false, isSticky: false })
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current)
+                intervalRef.current = null
+            }
+            if (cleanupListenersRef.current) {
+                cleanupListenersRef.current()
+                cleanupListenersRef.current = null
+            }
+            return
+        }
+        let didCancel = false
         const initialize = async () => {
             try {
                 // Initialize Kuromoji tokenizer
@@ -216,7 +250,6 @@ const CaptionEnhancer: React.FC = () => {
                     })
                     window.kuromojiTokenizer = tokenizer
                 }
-
                 // Load JMdict data
                 if (!window.jmdictLoaded) {
                     try {
@@ -224,11 +257,8 @@ const CaptionEnhancer: React.FC = () => {
                             chrome.runtime.getURL("assets/data/japanese/jmdict-simplified-flat-full.json")
                         )
                         window.jmdictData = await response.json()
-                        
-                        // Create indices
                         window.jmdictIndex = {}
                         window.jmdictKanaIndex = {}
-
                         window.jmdictData.forEach((entry) => {
                             if (Array.isArray(entry.kanji)) {
                                 entry.kanji.forEach((kanji) => {
@@ -241,7 +271,6 @@ const CaptionEnhancer: React.FC = () => {
                                 })
                             }
                         })
-
                         window.jmdictLoaded = true
                         console.log("[Bundai] JMdict loaded:", window.jmdictData.length, "entries")
                     } catch (e) {
@@ -252,15 +281,16 @@ const CaptionEnhancer: React.FC = () => {
                         window.jmdictLoaded = true
                     }
                 }
-
-                setIsInitialized(true)
+                if (!didCancel) setIsInitialized(true)
             } catch (error) {
                 console.error("Failed to initialize:", error)
             }
         }
-
         initialize()
-    }, [])
+        return () => {
+            didCancel = true
+        }
+    }, [enabled])
 
     // Utility functions
     const isJapaneseText = (text: string) => {
@@ -406,36 +436,26 @@ const CaptionEnhancer: React.FC = () => {
         })
     }
 
-    // Monitor captions
+    // Monitor captions (only if enabled)
     useEffect(() => {
-        if (!isInitialized) return
-
+        if (!isInitialized || !enabled) return
         // Only start monitoring if we're on a YouTube watch page
         if (!window.location.href.includes("youtube.com/watch")) {
             return
         }
-
         // Add pause/resume on subtitle container hover
         const addSubtitleHoverListeners = () => {
             const captionContainer = document.querySelector('.captions-text');
             if (!captionContainer) return;
-
             const handleMouseEnter = () => {
                 const video = document.querySelector('video');
                 if (video && typeof (video as HTMLVideoElement).pause === 'function') {
                     (video as HTMLVideoElement).pause();
                 }
             };
-            const handleMouseLeave = () => {
-                // Optionally resume playback:
-                // const video = document.querySelector('video');
-                // if (video && typeof (video as HTMLVideoElement).play === 'function') {
-                //     (video as HTMLVideoElement).play();
-                // }
-            };
+            const handleMouseLeave = () => {};
             captionContainer.addEventListener('mouseenter', handleMouseEnter);
             captionContainer.addEventListener('mouseleave', handleMouseLeave);
-
             // Cleanup
             return () => {
                 captionContainer.removeEventListener('mouseenter', handleMouseEnter);
@@ -443,12 +463,11 @@ const CaptionEnhancer: React.FC = () => {
             };
         };
         const cleanupListeners = addSubtitleHoverListeners();
-
+        cleanupListenersRef.current = cleanupListeners || null;
         const startMonitoring = () => {
             if (intervalRef.current) {
                 clearInterval(intervalRef.current)
             }
-
             intervalRef.current = setInterval(() => {
                 if (!window.location.href.includes("youtube.com/watch")) {
                     if (intervalRef.current) {
@@ -457,7 +476,6 @@ const CaptionEnhancer: React.FC = () => {
                     }
                     return
                 }
-
                 const currentText = getCaptionText()
                 if (currentText && currentText !== lastCaptionText && isJapaneseText(currentText)) {
                     setLastCaptionText(currentText)
@@ -465,9 +483,7 @@ const CaptionEnhancer: React.FC = () => {
                 }
             }, 500)
         }
-
         startMonitoring()
-
         return () => {
             if (intervalRef.current) {
                 clearInterval(intervalRef.current)
@@ -475,12 +491,12 @@ const CaptionEnhancer: React.FC = () => {
             }
             if (cleanupListeners) cleanupListeners();
         }
-    }, [isInitialized, lastCaptionText])
+    }, [isInitialized, lastCaptionText, enabled])
 
-    // Handle YouTube SPA navigation
+    // Handle YouTube SPA navigation (only if enabled)
     useEffect(() => {
+        if (!enabled) return
         let currentUrl = window.location.href
-
         const observer = new MutationObserver(() => {
             if (currentUrl !== window.location.href) {
                 currentUrl = window.location.href
@@ -488,17 +504,15 @@ const CaptionEnhancer: React.FC = () => {
                 setWordCard(prev => ({ ...prev, isVisible: false, isSticky: false }))
             }
         })
-
         observer.observe(document.body, {
             childList: true,
             subtree: true
         })
-
         return () => observer.disconnect()
-    }, [])
+    }, [enabled])
 
-    // Only render if we're on a YouTube watch page
-    if (!window.location.href.includes("youtube.com/watch") || !isInitialized) {
+    // Only render if we're on a YouTube watch page, initialized, and enabled
+    if (!window.location.href.includes("youtube.com/watch") || !isInitialized || !enabled) {
         return null
     }
 
@@ -513,5 +527,4 @@ const CaptionEnhancer: React.FC = () => {
     )
 }
 
-// This is the required default export for Plasmo CSUI
 export default CaptionEnhancer
