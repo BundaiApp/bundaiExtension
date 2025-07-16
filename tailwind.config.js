@@ -3,8 +3,11 @@ module.exports = {
   mode:"jit",
   darkMode:"class",
   content: [
-    "./**/*.{js,ts,jsx,tsx}",
-  ],
+  "./contents/**/*.{js,ts,jsx,tsx}",
+  "./popup.tsx",
+  "./assets/**/*.{js,ts,jsx,tsx}",
+  "./style.css"
+],
   theme: {
     extend: {},
   },
