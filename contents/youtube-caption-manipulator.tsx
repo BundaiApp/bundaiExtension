@@ -54,64 +54,69 @@ const WordCard: React.FC<WordCardProps> = ({ word, mouseX, isVisible, isSticky, 
     const [cardHeight, setCardHeight] = useState<number>(0)
     const cardRef = useRef<HTMLDivElement>(null)
 
+    // Always update containerRect on mount and when visible changes
     useEffect(() => {
-        // Find subtitle container position
         const captionContainer = document.querySelector('.captions-text')
         if (captionContainer) {
             setContainerRect(captionContainer.getBoundingClientRect())
         }
     }, [isVisible])
 
+    // Measure card height after render
     useEffect(() => {
-        // Measure card height after render
-        if (isVisible && cardRef.current) {
+        if (cardRef.current) {
             setCardHeight(cardRef.current.offsetHeight)
         }
-    }, [isVisible, entry, isLoading, word])
+    }, [entry, isLoading, word])
 
     useEffect(() => {
         const loadEntry = async () => {
             if (!word) return
-
-            // Wait for jmdict to be loaded
             if (!window.jmdictLoaded) {
                 await new Promise<void>((resolve) => {
                     const check = () => window.jmdictLoaded ? resolve() : setTimeout(check, 50)
                     check()
                 })
             }
-
-            // Lookup in JMdict
             let foundEntry = window.jmdictIndex?.[word]
             if (!foundEntry) {
                 foundEntry = window.jmdictKanaIndex?.[word]
             }
-
             setEntry(foundEntry || null)
             setIsLoading(false)
         }
-
-        setIsLoading(true)
-        setEntry(null)
-        loadEntry()
+        if (word) {
+            setIsLoading(true)
+            setEntry(null)
+            loadEntry()
+        } else {
+            setIsLoading(false)
+            setEntry(null)
+        }
     }, [word])
-
-    if (!isVisible || !containerRect) return null
 
     // Calculate position: above the subtitle container, x based on mouseX (clamped), y based on dynamic card height
     const cardWidth = 300
     const margin = 12
     let left = mouseX - cardWidth / 2
-    // Clamp left to container bounds
-    left = Math.max(containerRect.left, Math.min(left, containerRect.right - cardWidth))
-    const top = containerRect.top - cardHeight - margin // dynamic height
+    let top = 0
+    if (containerRect) {
+        left = Math.max(containerRect.left, Math.min(left, containerRect.right - cardWidth))
+        top = containerRect.top - cardHeight - margin
+    }
 
     const cardStyle: React.CSSProperties = {
         position: 'fixed',
         left,
         top,
         zIndex: 999999,
-        pointerEvents: 'auto'
+        pointerEvents: isVisible ? 'auto' : 'none',
+        opacity: isVisible ? 1 : 0,
+        transition: 'opacity 0.25s ease',
+        // Prevent accidental selection
+        userSelect: 'none',
+        // Hide if no containerRect (not on watch page)
+        display: containerRect ? 'block' : 'none',
     }
 
     return (
@@ -317,12 +322,13 @@ const CaptionEnhancer: React.FC = () => {
 
     // Word card handlers
     const handleWordHover = (word: string, mouseX: number) => {
-        setWordCard({
+        setWordCard(prev => ({
+            ...prev,
             word,
             mouseX,
             isVisible: true,
             isSticky: false
-        })
+        }))
     }
 
     const handleWordLeave = () => {
@@ -333,19 +339,21 @@ const CaptionEnhancer: React.FC = () => {
     }
 
     const handleWordClick = (word: string, mouseX: number) => {
-        setWordCard({
+        setWordCard(prev => ({
+            ...prev,
             word,
             mouseX,
             isVisible: true,
             isSticky: true
-        })
+        }))
     }
 
     const handleCardClose = () => {
         setWordCard(prev => ({
             ...prev,
             isVisible: false,
-            isSticky: false
+            isSticky: false,
+            word: ""
         }))
     }
 
@@ -511,8 +519,15 @@ const CaptionEnhancer: React.FC = () => {
         return () => observer.disconnect()
     }, [enabled])
 
+    // When extension is disabled, hide card and cleanup
+    useEffect(() => {
+        if (!enabled) {
+            setWordCard({ word: "", mouseX: 0, isVisible: false, isSticky: false })
+        }
+    }, [enabled])
+
     // Only render if we're on a YouTube watch page, initialized, and enabled
-    if (!window.location.href.includes("youtube.com/watch") || !isInitialized || !enabled) {
+    if (!window.location.href.includes("youtube.com/watch") || !isInitialized) {
         return null
     }
 
@@ -520,7 +535,7 @@ const CaptionEnhancer: React.FC = () => {
         <WordCard
             word={wordCard.word}
             mouseX={wordCard.mouseX}
-            isVisible={wordCard.isVisible}
+            isVisible={wordCard.isVisible && enabled}
             isSticky={wordCard.isSticky}
             onClose={handleCardClose}
         />
