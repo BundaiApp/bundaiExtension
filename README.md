@@ -1,33 +1,37 @@
-This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
+# Bundai - YouTube Subtitle Language Helper
+
+This is a browser extension (currently for YouTube) designed to help users learn languages. Hover over subtitle words to instantly see their meanings. The extension uses a spaced repetition system and a comprehensive learning system to enhance language acquisition. Future updates will connect this extension with our mobile app for a seamless learning experience.
 
 ## Getting Started
 
-First, run the development server:
+To start the development server:
 
 ```bash
-pnpm dev
-# or
-npm run dev
+pnpm run dev
 ```
 
-Open your browser and load the appropriate development build. For example, if you are developing for the chrome browser, using manifest v3, use: `build/chrome-mv3-dev`.
+Load the development build in your browser (e.g., for Chrome, use the `build/chrome-mv3-dev` directory).
 
-You can start editing the popup by modifying `popup.tsx`. It should auto-update as you make changes. To add an options page, simply add a `options.tsx` file to the root of the project, with a react component default exported. Likewise to add a content page, add a `content.ts` file to the root of the project, importing some module and do some logic, then reload the extension on your browser.
+You can start editing the extension by modifying files like `popup.tsx` or `contents/youtube-caption-manipulator.tsx`. Changes should auto-update during development.
 
-For further guidance, [visit our Documentation](https://docs.plasmo.com/)
+## Production Build
 
-## Making production build
-
-Run the following:
+To create a production bundle:
 
 ```bash
-pnpm build
-# or
-npm run build
+pnpm run build
 ```
 
-This should create a production bundle for your extension, ready to be zipped and published to the stores.
+The build will be ready for publishing to browser extension stores.
+
+This should create a production bundle for your extension, ready to be 
+zipped and published to the stores.
 
 ## Submit to the webstores
 
-The easiest way to deploy your Plasmo extension is to use the built-in [bpp](https://bpp.browser.market) GitHub action. Prior to using this action however, make sure to build your extension and upload the first version to the store to establish the basic credentials. Then, simply follow [this setup instruction](https://docs.plasmo.com/framework/workflows/submit) and you should be on your way for automated submission!
+The easiest way to deploy your Plasmo extension is to use the built-in [bpp]
+(https://bpp.browser.market) GitHub action. Prior to using this action 
+however, make sure to build your extension and upload the first version to 
+the store to establish the basic credentials. Then, simply follow [this 
+setup instruction](https://docs.plasmo.com/framework/workflows/submit) and 
+you should be on your way for automated submission
