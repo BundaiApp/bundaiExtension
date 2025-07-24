@@ -2,6 +2,10 @@ import cssText from "data-text:~style.css"
 import React, { useState, useEffect, useRef } from "react"
 import type { PlasmoCSConfig } from "plasmo"
 import kuromoji from "kuromoji"
+import { useMutation, ApolloProvider } from "@apollo/client"
+import client from "../graphql"
+import {ADD_FLASH_CARD_MUTATION} from "../graphql/mutations/addFlashCard.mutation"
+import { storage, storageReady } from "../utils/secure-storage"
 
 export const getStyle = () => {
     const style = document.createElement("style")
@@ -53,6 +57,7 @@ const WordCard: React.FC<WordCardProps> = ({ word, mouseX, isVisible, isSticky, 
     const [containerRect, setContainerRect] = useState<DOMRect | null>(null)
     const [cardHeight, setCardHeight] = useState<number>(0)
     const cardRef = useRef<HTMLDivElement>(null)
+    const [addFlashCard] = useMutation(ADD_FLASH_CARD_MUTATION, { client })
 
     // Always update containerRect on mount and when visible changes
     useEffect(() => {
@@ -94,6 +99,42 @@ const WordCard: React.FC<WordCardProps> = ({ word, mouseX, isVisible, isSticky, 
             setEntry(null)
         }
     }, [word])
+
+    // If the card just became sticky, trigger the mutation
+    useEffect(() => {
+        if (isSticky && entry && !isLoading && word) {
+            (async () => {
+                await storageReady
+                const userId = await storage.get("userId")
+                if (!userId) {
+                    console.log("No userId found in secure storage.")
+                    return
+                }
+                // Extract data from entry
+                const kanjiName = entry.kanji && entry.kanji.length > 0 ? entry.kanji[0] : word
+                const hiragana = entry.kana && entry.kana.length > 0 ? entry.kana[0] : word
+                const meanings = entry.senses ? entry.senses.flatMap(s => s.gloss).filter(Boolean) : []
+                const quizAnswers = [
+                    ...(entry.kana || []),
+                    ...(entry.kanji || [])
+                ].filter(Boolean)
+                try {
+                    const result = await addFlashCard({
+                        variables: {
+                            userId,
+                            kanjiName,
+                            hiragana,
+                            meanings,
+                            quizAnswers
+                        }
+                    })
+                    console.log("Flashcard added:", result)
+                } catch (err) {
+                    console.error("Failed to add flashcard:", err)
+                }
+            })()
+        }
+    }, [isSticky, entry, isLoading, word])
 
     // Calculate position: above the subtitle container, x based on mouseX (clamped), y based on dynamic card height
     const cardWidth = 300
