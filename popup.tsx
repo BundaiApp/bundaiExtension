@@ -1,25 +1,30 @@
 import { useState, useEffect } from "react"
+import Login from "./tabs/login"
 import "./style.css"
+import { SecureStorage } from "@plasmohq/storage/secure"
+import { ApolloProvider } from "@apollo/client"
+import client from "~graphql"
 
-function IndexPopup() {
+function MainPage({ onLogout }) {
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
-
-  // Load the enabled state from chrome.storage.local on mount
+  const [secureReady, setSecureReady] = useState(false)
+  const [secureStorage] = useState(() => new SecureStorage())
   useEffect(() => {
-    chrome.storage.local.get(["extensionEnabled"], (result) => {
-      setEnabled(result.extensionEnabled !== false) // default to true
+    secureStorage.setPassword("bundai-secure-key").then(() => setSecureReady(true))
+  }, [secureStorage])
+  useEffect(() => {
+    if (!secureReady) return
+    secureStorage.get("extensionEnabled").then((value) => {
+      setEnabled(typeof value === "boolean" ? value : false)
       setLoading(false)
     })
-  }, [])
-
-  // Handle toggle change
+  }, [secureReady, secureStorage])
   const handleToggle = (e) => {
     const newValue = e.target.checked
     setEnabled(newValue)
-    chrome.storage.local.set({ extensionEnabled: newValue })
+    secureStorage.set("extensionEnabled", newValue)
   }
-
   return (
     <div className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
       <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
@@ -47,8 +52,38 @@ function IndexPopup() {
       <div className="text-black text-xs mt-1 opacity-70">
         To completely turn off the extension, disable it from <span className="underline">browser://extensions</span>.
       </div>
+      <button onClick={onLogout} className="bg-black text-yellow-400 p-2 rounded font-bold mt-2">Logout</button>
     </div>
   )
 }
 
-export default IndexPopup
+function IndexPopup() {
+  const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
+  const [secureReady, setSecureReady] = useState(false)
+  const [secureStorage] = useState(() => new SecureStorage())
+  useEffect(() => {
+    secureStorage.setPassword("bundai-secure-key").then(() => setSecureReady(true))
+  }, [secureStorage])
+  useEffect(() => {
+    if (!secureReady) return
+    secureStorage.get("loggedIn").then((value) => {
+      setLoggedIn(typeof value === "boolean" ? value : false)
+    })
+  }, [secureReady, secureStorage])
+  const handleLogin = () => setLoggedIn(true)
+  const handleLogout = async () => {
+    await secureStorage.set("loggedIn", false)
+    setLoggedIn(false)
+  }
+  if (!secureReady || loggedIn === null) return null
+  if (!loggedIn) return <Login onLogin={handleLogin} />
+  return <MainPage onLogout={handleLogout} />
+}
+
+const MainApp = ()=>(
+  <ApolloProvider client={client}>
+    <IndexPopup/>
+  </ApolloProvider>
+)
+
+export default MainApp
