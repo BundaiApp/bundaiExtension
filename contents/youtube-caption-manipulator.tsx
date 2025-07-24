@@ -6,6 +6,7 @@ import { useMutation, ApolloProvider } from "@apollo/client"
 import client from "../graphql"
 import {ADD_FLASH_CARD_MUTATION} from "../graphql/mutations/addFlashCard.mutation"
 import { storage, storageReady } from "../utils/secure-storage"
+import { toRomaji } from "wanakana"
 
 export const getStyle = () => {
     const style = document.createElement("style")
@@ -160,6 +161,20 @@ const WordCard: React.FC<WordCardProps> = ({ word, mouseX, isVisible, isSticky, 
         display: containerRect ? 'block' : 'none',
     }
 
+    // Compute romaji for the word (using kana reading if available)
+    let romaji = ""
+    try {
+        if (entry && Array.isArray(entry.kana) && typeof entry.kana[0] === "string" && entry.kana[0].length > 0) {
+            romaji = toRomaji(entry.kana[0])
+        } else if (typeof word === "string" && word.length > 0) {
+            romaji = toRomaji(word)
+        }
+    } catch (e) {
+        console.error("Romaji conversion error:", e)
+        romaji = ""
+    }
+
+
     return (
         <div 
             ref={cardRef}
@@ -172,7 +187,10 @@ const WordCard: React.FC<WordCardProps> = ({ word, mouseX, isVisible, isSticky, 
                 >
                     ×
                 </button>
-                <div className="text-2xl font-extrabold mb-2">{word}</div>
+                <div className="text-2xl font-extrabold">{word}</div>
+                {romaji && (
+                    <div className="text-lg opacity-50 font-bold mb-2">{romaji}</div>
+                )}
                 {isLoading ? (
                     <div className="text-lg opacity-70">Loading...</div>
                 ) : entry ? (
