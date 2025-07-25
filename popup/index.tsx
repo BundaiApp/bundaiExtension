@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
-import Login from "./tabs/login"
-import "./style.css"
+import Login from "./login"
+import Register from "./register"
+import "../style.css"
 import { SecureStorage } from "@plasmohq/storage/secure"
 import { ApolloProvider } from "@apollo/client"
 import client from "~graphql"
@@ -61,6 +62,7 @@ function IndexPopup() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [secureReady, setSecureReady] = useState(false)
   const [secureStorage] = useState(() => new SecureStorage())
+  const [showRegister, setShowRegister] = useState(false)
   useEffect(() => {
     secureStorage.setPassword("bundai-secure-key").then(() => setSecureReady(true))
   }, [secureStorage])
@@ -70,13 +72,24 @@ function IndexPopup() {
       setLoggedIn(typeof value === "boolean" ? value : false)
     })
   }, [secureReady, secureStorage])
-  const handleLogin = () => setLoggedIn(true)
+  const handleLogin = () => {
+    setLoggedIn(true)
+    setShowRegister(false)
+  }
   const handleLogout = async () => {
     await secureStorage.set("loggedIn", false)
     setLoggedIn(false)
   }
+  const handleShowRegister = () => setShowRegister(true)
+  const handleShowLogin = () => setShowRegister(false)
   if (!secureReady || loggedIn === null) return null
-  if (!loggedIn) return <Login onLogin={handleLogin} />
+  if (!loggedIn) {
+    if (showRegister) {
+      return <Register onRegister={handleLogin} onShowLogin={handleShowLogin} />
+    } else {
+      return <Login onLogin={handleLogin} onShowRegister={handleShowRegister} />
+    }
+  }
   return <MainPage onLogout={handleLogout} />
 }
 
