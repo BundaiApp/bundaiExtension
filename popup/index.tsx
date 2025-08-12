@@ -5,15 +5,21 @@ import "../style.css"
 import { SecureStorage } from "@plasmohq/storage/secure"
 import { ApolloProvider } from "@apollo/client"
 import client from "~graphql"
+import { useSubtitle } from "~hooks/useSubtitle"
 
 function MainPage({ onLogout }) {
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
   const [secureReady, setSecureReady] = useState(false)
   const [secureStorage] = useState(() => new SecureStorage())
+  const videoId = "oFFdtWnZ5Jk"
+
+  const { subtitles, loading: subtitleLoading, error, refetch } = useSubtitle(videoId)
+
   useEffect(() => {
     secureStorage.setPassword("bundai-secure-key").then(() => setSecureReady(true))
   }, [secureStorage])
+
   useEffect(() => {
     if (!secureReady) return
     secureStorage.get("extensionEnabled").then((value) => {
@@ -21,11 +27,13 @@ function MainPage({ onLogout }) {
       setLoading(false)
     })
   }, [secureReady, secureStorage])
+
   const handleToggle = (e) => {
     const newValue = e.target.checked
     setEnabled(newValue)
     secureStorage.set("extensionEnabled", newValue)
   }
+
   return (
     <div className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
       <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
@@ -53,10 +61,39 @@ function MainPage({ onLogout }) {
       <div className="text-black text-xs mt-1 opacity-70">
         To completely turn off the extension, disable it from <span className="underline">browser://extensions</span>.
       </div>
+
+      {/* Subtitles Section */}
+      <div className="mt-4">
+        <h3 className="text-black font-bold">Available Subtitles</h3>
+        {subtitleLoading && <p className="text-xs text-gray-800">Loading subtitles...</p>}
+        {error && <p className="text-xs text-red-700">{error}</p>}
+        {subtitles && Object.keys(subtitles).length > 0 ? (
+          <div className="max-h-40 overflow-auto text-xs mt-2">
+            {Object.entries(subtitles).map(([lang, urls]) => (
+              <div key={lang} className="mb-2">
+                <div className="font-semibold text-black">{lang.toUpperCase()}</div>
+                <ul className="list-disc ml-4">
+                  {urls.map((url, index) => (
+                    <li key={index}>
+                      <a href={url} className="text-blue-600 underline" target="_blank" rel="noopener noreferrer">
+                        Format {index + 1}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        ) : (
+          !subtitleLoading && <p className="text-xs text-gray-800">No subtitles found.</p>
+        )}
+      </div>
+
       <button onClick={onLogout} className="bg-black text-yellow-400 p-2 rounded font-bold mt-2">Logout</button>
     </div>
   )
 }
+
 
 function IndexPopup() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
