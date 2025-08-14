@@ -6,6 +6,7 @@ import { SecureStorage } from "@plasmohq/storage/secure"
 import { ApolloProvider } from "@apollo/client"
 import client from "~graphql"
 import { useSubtitle } from "~hooks/useSubtitle"
+import SubtitlesSection from "~components/SubtitlesSection"
 
 function MainPage({ onLogout }) {
   const [enabled, setEnabled] = useState(true)
@@ -63,7 +64,7 @@ function MainPage({ onLogout }) {
       </div>
 
       {/* Subtitles Section */}
-      <div className="mt-4">
+      {/* <div className="mt-4">
         <h3 className="text-black font-bold">Available Subtitles</h3>
         {subtitleLoading && <p className="text-xs text-gray-800">Loading subtitles...</p>}
         {error && <p className="text-xs text-red-700">{error}</p>}
@@ -87,7 +88,8 @@ function MainPage({ onLogout }) {
         ) : (
           !subtitleLoading && <p className="text-xs text-gray-800">No subtitles found.</p>
         )}
-      </div>
+      </div> */}
+      <SubtitlesSection subtitles={subtitles} error={error} subtitleLoading={subtitleLoading}/>
 
       <button onClick={onLogout} className="bg-black text-yellow-400 p-2 rounded font-bold mt-2">Logout</button>
     </div>
