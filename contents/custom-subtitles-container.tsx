@@ -54,23 +54,15 @@ class CustomSubtitleContainer {
     gap: 10 // 10px gap between subtitles
   }
 
-  // Example subtitle data - replace with actual subtitle fetching logic
-  private subtitle1Data: SubtitleCue[] = [
-    { start: 1, end: 4, text: "Welcome to our video tutorial" },
-    { start: 5, end: 8, text: "Today we'll learn about web development" },
-    { start: 10, end: 13, text: "Let's start with the basics" },
-    { start: 15, end: 18, text: "HTML is the foundation of web pages" }
-  ]
-
-  private subtitle2Data: SubtitleCue[] = [
-    { start: 1.5, end: 4.5, text: "ビデオチュートリアルへようこそ" },
-    { start: 5.5, end: 8.5, text: "今日はWeb開発について学びます" },
-    { start: 10.5, end: 13.5, text: "基本から始めましょう" },
-    { start: 15.5, end: 18.5, text: "HTMLはWebページの基盤です" }
-  ]
+  // Real subtitle data from selected URLs
+  private subtitle1Data: SubtitleCue[] = []
+  private subtitle2Data: SubtitleCue[] = []
+  private subtitle1Url: string | null = null
+  private subtitle2Url: string | null = null
 
   constructor() {
     this.init()
+    this.setupMessageListener()
   }
 
   private init(): void {
@@ -289,6 +281,158 @@ class CustomSubtitleContainer {
   public updateSubtitleData(subtitle1Data?: SubtitleCue[], subtitle2Data?: SubtitleCue[]): void {
     if (subtitle1Data) this.subtitle1Data = subtitle1Data
     if (subtitle2Data) this.subtitle2Data = subtitle2Data
+  }
+
+  // Load subtitles from URLs
+  public async loadSubtitleFromUrl(url: string, trackNumber: 1 | 2): Promise<void> {
+    try {
+      console.log(`[Custom Subtitles] Loading subtitle ${trackNumber} from:`, url)
+      
+      if (trackNumber === 1) {
+        this.subtitle1Url = url
+      } else {
+        this.subtitle2Url = url
+      }
+
+      const response = await fetch(url)
+      const subtitleText = await response.text()
+      
+      // Parse subtitle format (VTT, SRT, etc.)
+      const parsedSubtitles = this.parseSubtitleText(subtitleText)
+      
+      if (trackNumber === 1) {
+        this.subtitle1Data = parsedSubtitles
+        console.log(`[Custom Subtitles] Loaded ${parsedSubtitles.length} cues for subtitle 1`)
+      } else {
+        this.subtitle2Data = parsedSubtitles
+        console.log(`[Custom Subtitles] Loaded ${parsedSubtitles.length} cues for subtitle 2`)
+      }
+      
+    } catch (error) {
+      console.error(`[Custom Subtitles] Error loading subtitle ${trackNumber}:`, error)
+    }
+  }
+
+  // Parse subtitle text (supports VTT and SRT formats)
+  private parseSubtitleText(subtitleText: string): SubtitleCue[] {
+    const cues: SubtitleCue[] = []
+    
+    // Detect format
+    if (subtitleText.includes('WEBVTT')) {
+      return this.parseVTT(subtitleText)
+    } else if (subtitleText.match(/^\d+\s*$/m)) {
+      return this.parseSRT(subtitleText)
+    }
+    
+    return cues
+  }
+
+  // Parse WebVTT format
+  private parseVTT(vttText: string): SubtitleCue[] {
+    const cues: SubtitleCue[] = []
+    const lines = vttText.split('\n')
+    
+    let i = 0
+    while (i < lines.length) {
+      const line = lines[i].trim()
+      
+      // Look for timestamp line (contains -->)
+      if (line.includes('-->')) {
+        const timeMatch = line.match(/(\d{2}:)?(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}:)?(\d{2}):(\d{2})\.(\d{3})/)
+        
+        if (timeMatch) {
+          const startTime = this.parseTimeToSeconds(timeMatch[0].split('-->')[0].trim())
+          const endTime = this.parseTimeToSeconds(timeMatch[0].split('-->')[1].trim())
+          
+          // Get subtitle text (next non-empty lines)
+          i++
+          let text = ''
+          while (i < lines.length && lines[i].trim() !== '') {
+            if (text) text += ' '
+            text += lines[i].trim()
+            i++
+          }
+          
+          if (text) {
+            cues.push({
+              start: startTime,
+              end: endTime,
+              text: text.replace(/<[^>]*>/g, '') // Remove HTML tags
+            })
+          }
+        }
+      }
+      i++
+    }
+    
+    return cues
+  }
+
+  // Parse SRT format
+  private parseSRT(srtText: string): SubtitleCue[] {
+    const cues: SubtitleCue[] = []
+    const blocks = srtText.split(/\n\s*\n/)
+    
+    for (const block of blocks) {
+      const lines = block.trim().split('\n')
+      if (lines.length >= 3) {
+        const timeMatch = lines[1].match(/(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})/)
+        
+        if (timeMatch) {
+          const startTime = this.parseTimeToSeconds(lines[1].split('-->')[0].trim().replace(',', '.'))
+          const endTime = this.parseTimeToSeconds(lines[1].split('-->')[1].trim().replace(',', '.'))
+          
+          const text = lines.slice(2).join(' ').replace(/<[^>]*>/g, '') // Remove HTML tags
+          
+          cues.push({
+            start: startTime,
+            end: endTime,
+            text: text
+          })
+        }
+      }
+    }
+    
+    return cues
+  }
+
+  // Convert time string to seconds
+  private parseTimeToSeconds(timeStr: string): number {
+    const parts = timeStr.match(/(?:(\d{2}):)?(\d{2}):(\d{2})[\.,](\d{3})/)
+    if (!parts) return 0
+    
+    const hours = parseInt(parts[1] || '0')
+    const minutes = parseInt(parts[2])
+    const seconds = parseInt(parts[3])
+    const milliseconds = parseInt(parts[4])
+    
+    return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000
+  }
+
+  // Setup message listener for communication with popup/extension
+  private setupMessageListener(): void {
+    // Listen for messages from the extension popup
+    if (typeof chrome !== 'undefined' && chrome.runtime) {
+      chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (message.action === 'loadSubtitle') {
+          this.loadSubtitleFromUrl(message.url, message.trackNumber)
+            .then(() => sendResponse({ success: true }))
+            .catch(error => sendResponse({ success: false, error: error.message }))
+          return true // Keep message channel open for async response
+        }
+        
+        if (message.action === 'updateSettings') {
+          this.updateSettings(message.settings)
+          sendResponse({ success: true })
+        }
+      })
+    }
+    
+    // Also listen for custom events (alternative communication method)
+    window.addEventListener('loadSubtitle', (event: CustomEvent) => {
+      const { url, trackNumber } = event.detail
+      this.loadSubtitleFromUrl(url, trackNumber)
+    })
   }
 
   public destroy(): void {
