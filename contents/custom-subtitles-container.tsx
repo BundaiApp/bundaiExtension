@@ -1,7 +1,17 @@
+import { ApolloProvider, useMutation } from "@apollo/client"
 import cssText from "data-text:~style.css"
 import kuromoji from "kuromoji"
 import type { PlasmoCSConfig } from "plasmo"
 import { toRomaji } from "wanakana"
+
+import client from "../graphql"
+import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
+
+export const getStyle = () => {
+  const style = document.createElement("style")
+  style.textContent = cssText
+  return style
+}
 
 // Define the configuration for the content script
 export const config: PlasmoCSConfig = {
@@ -756,12 +766,18 @@ class CustomSubtitleContainer {
       romaji = ""
     }
 
-    const closeButton = `
+    const buttons = `
+    <div style="position: absolute; top: 8px; right: 8px; display: flex; gap: 8px;">
+      <button onclick="alert('Add action here')" 
+              style="background: none; border: none; color: black; font-size: 22px; cursor: pointer; padding: 4px; opacity: 0.7; line-height: 1; transition: opacity 0.2s;" 
+              onmouseover="this.style.opacity='1'" 
+              onmouseout="this.style.opacity='0.7'">+</button>
       <button onclick="this.closest('.custom-word-card').style.opacity='0'; setTimeout(() => this.closest('.custom-word-card').style.display='none', 250)" 
-              style="position: absolute; top: 8px; right: 8px; background: none; border: none; color: black; font-size: 24px; cursor: pointer; padding: 4px; opacity: 0.7; line-height: 1; transition: opacity 0.2s;" 
+              style="background: none; border: none; color: black; font-size: 22px; cursor: pointer; padding: 4px; opacity: 0.7; line-height: 1; transition: opacity 0.2s;" 
               onmouseover="this.style.opacity='1'" 
               onmouseout="this.style.opacity='0.7'">×</button>
-    `
+    </div>
+  `
 
     // Base card styles (Tailwind-like)
     const cardStyles = `
@@ -782,7 +798,7 @@ class CustomSubtitleContainer {
     if (this.wordCard.isLoading) {
       this.wordCardElement.innerHTML = `
         <div style="${cardStyles}">
-          ${closeButton}
+          ${buttons}
           <div style="font-size: 24px; font-weight: 800; margin-bottom: 4px;">${this.escapeHtml(this.wordCard.word)}</div>
           <div style="font-size: 16px; opacity: 0.7;">Loading...</div>
         </div>
@@ -811,7 +827,7 @@ class CustomSubtitleContainer {
 
       this.wordCardElement.innerHTML = `
         <div style="${cardStyles}">
-          ${closeButton}
+        ${buttons}
           <div style="font-size: 24px; font-weight: 800; margin-bottom: 4px;">${this.escapeHtml(this.wordCard.word)}</div>
           ${romaji ? `<div style="font-size: 16px; opacity: 0.5; font-weight: bold; margin-bottom: 8px;">${this.escapeHtml(romaji)}</div>` : ""}
           ${kanjiElements ? `<div style="margin: 8px 0;"><span style="font-size: 16px; opacity: 0.8; margin-right: 8px;">Kanji: </span><div style="display: inline;">${kanjiElements}</div></div>` : ""}
@@ -821,7 +837,7 @@ class CustomSubtitleContainer {
     } else {
       this.wordCardElement.innerHTML = `
         <div style="${cardStyles}">
-          ${closeButton}
+        ${buttons}
           <div style="font-size: 24px; font-weight: 800; margin-bottom: 4px;">${this.escapeHtml(this.wordCard.word)}</div>
           ${romaji ? `<div style="font-size: 16px; opacity: 0.5; font-weight: bold; margin-bottom: 8px;">${this.escapeHtml(romaji)}</div>` : ""}
           <div style="font-size: 16px; opacity: 0.7;">No dictionary entry found</div>
