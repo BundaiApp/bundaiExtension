@@ -1,30 +1,35 @@
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
+
 import Login from "./login"
 import Register from "./register"
+
 import "../style.css"
-import { SecureStorage } from "@plasmohq/storage/secure"
+
 import { ApolloProvider } from "@apollo/client"
+
+import { SecureStorage } from "@plasmohq/storage/secure"
+
+import SubtitlesSection from "~components/SubtitlesSection"
 import client from "~graphql"
 import { useSubtitle } from "~hooks/useSubtitle"
-import SubtitlesSection from "~components/SubtitlesSection"
 
 // Utility function to extract video ID from YouTube URLs
 function extractVideoId(url: string): string | null {
-  if (!url) return null;
+  if (!url) return null
 
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&?/]+)/i,
-    /youtube\.com\/watch.*?[?&]v=([^&?/]+)/i,
-  ];
+    /youtube\.com\/watch.*?[?&]v=([^&?/]+)/i
+  ]
 
   for (const pattern of patterns) {
-    const match = url.match(pattern);
+    const match = url.match(pattern)
     if (match && match[1]) {
-      return match[1];
+      return match[1]
     }
   }
 
-  return null;
+  return null
 }
 
 function MainPage({ onLogout }) {
@@ -36,22 +41,30 @@ function MainPage({ onLogout }) {
   const [currentUrl, setCurrentUrl] = useState<string>("")
 
   // Use the dynamic video ID, fallback to null if no video ID found
-  const { subtitles, loading: subtitleLoading, error, refetch } = useSubtitle(currentVideoId)
+  const {
+    subtitles,
+    loading: subtitleLoading,
+    error,
+    refetch
+  } = useSubtitle(currentVideoId)
 
   // Function to get current tab URL and extract video ID
   const getCurrentVideoId = async () => {
     try {
       // Get the current active tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
+      })
+
       if (tab && tab.url) {
         setCurrentUrl(tab.url)
         const videoId = extractVideoId(tab.url)
         setCurrentVideoId(videoId)
-        
+
         console.log("Current URL:", tab.url)
         console.log("Extracted Video ID:", videoId)
-        
+
         return videoId
       }
     } catch (error) {
@@ -60,17 +73,54 @@ function MainPage({ onLogout }) {
     }
   }
 
+  // Send message to content script to update extension state
+  const notifyContentScript = async (enabled: boolean) => {
+    try {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
+      })
+
+      if (tab?.id) {
+        chrome.tabs.sendMessage(
+          tab.id,
+          {
+            action: "extensionToggled",
+            enabled: enabled
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              console.log(
+                "Content script not ready or page doesn't support extension"
+              )
+            } else {
+              console.log("Extension state updated in content script:", enabled)
+            }
+          }
+        )
+      }
+    } catch (error) {
+      console.error("Error notifying content script:", error)
+    }
+  }
+
   // Initialize secure storage
   useEffect(() => {
-    secureStorage.setPassword("bundai-secure-key").then(() => setSecureReady(true))
+    secureStorage
+      .setPassword("bundai-secure-key")
+      .then(() => setSecureReady(true))
   }, [secureStorage])
 
   // Load extension enabled state
   useEffect(() => {
     if (!secureReady) return
     secureStorage.get("extensionEnabled").then((value) => {
-      setEnabled(typeof value === "boolean" ? value : false)
+      const enabledValue = typeof value === "boolean" ? value : true // Default to enabled
+      setEnabled(enabledValue)
       setLoading(false)
+
+      // Notify content script of initial state
+      notifyContentScript(enabledValue)
     })
   }, [secureReady, secureStorage])
 
@@ -98,23 +148,30 @@ function MainPage({ onLogout }) {
     }
   }, [])
 
-  const handleToggle = (e) => {
+  const handleToggle = async (e) => {
     const newValue = e.target.checked
     setEnabled(newValue)
-    secureStorage.set("extensionEnabled", newValue)
+
+    // Save to storage
+    await secureStorage.set("extensionEnabled", newValue)
+
+    // Notify content script immediately
+    await notifyContentScript(newValue)
   }
 
   const handleRefreshVideoId = () => {
     getCurrentVideoId()
   }
 
-  const isYouTubePage = currentUrl.includes('youtube.com')
+  const isYouTubePage = currentUrl.includes("youtube.com")
 
   return (
     <div className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
       <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
         <h1 className="text-xl font-extrabold text-black">Bundai</h1>
-        <h2 className="text-xs text-black opacity-80">A Japanese learning browser extension</h2>
+        <h2 className="text-xs text-black opacity-80">
+          A Japanese learning browser extension
+        </h2>
       </div>
 
       {/* Current Video Info */}
@@ -124,17 +181,17 @@ function MainPage({ onLogout }) {
         {isYouTubePage ? (
           <div className="mt-1">
             <span className="font-semibold">Video ID: </span>
-            <span className={currentVideoId ? "text-green-700" : "text-red-700"}>
+            <span
+              className={currentVideoId ? "text-green-700" : "text-red-700"}>
               {currentVideoId || "Not detected"}
             </span>
           </div>
         ) : (
           <div className="text-orange-600 mt-1">Not a YouTube page</div>
         )}
-        <button 
+        <button
           onClick={handleRefreshVideoId}
-          className="mt-1 px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
-        >
+          className="mt-1 px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600">
           Refresh
         </button>
       </div>
@@ -156,37 +213,58 @@ function MainPage({ onLogout }) {
       </div>
 
       <div className="text-black text-sm mt-2">
-        The extension is <span className={enabled ? "text-green-700 font-semibold" : "text-red-700 font-semibold"}>{enabled ? "Enabled" : "Disabled"}</span>.
+        The extension is{" "}
+        <span
+          className={
+            enabled
+              ? "text-green-700 font-semibold"
+              : "text-red-700 font-semibold"
+          }>
+          {enabled ? "Enabled" : "Disabled"}
+        </span>
+        .
       </div>
 
       <div className="text-black text-xs mt-1 opacity-70">
-        To completely turn off the extension, disable it from <span className="underline">browser://extensions</span>.
+        To completely turn off the extension, disable it from{" "}
+        <span className="underline">browser://extensions</span>.
       </div>
 
-      {/* Subtitles Section - Only show if we have a video ID and it's YouTube */}
-      {isYouTubePage && currentVideoId ? (
-        <SubtitlesSection 
-          subtitles={subtitles} 
-          error={error} 
+      {/* Only show subtitles section if extension is enabled */}
+      {enabled && isYouTubePage && currentVideoId ? (
+        <SubtitlesSection
+          subtitles={subtitles}
+          error={error}
           subtitleLoading={subtitleLoading}
+          currentVideoId={currentVideoId}
         />
-      ) : isYouTubePage ? (
+      ) : enabled && isYouTubePage ? (
         <div className="mt-4 p-3 bg-red-100 rounded">
           <h3 className="text-red-700 font-bold">Video ID Not Found</h3>
           <p className="text-xs text-red-600 mt-1">
-            Could not extract video ID from current URL. Make sure you're on a YouTube video page.
+            Could not extract video ID from current URL. Make sure you're on a
+            YouTube video page.
           </p>
         </div>
-      ) : (
+      ) : enabled ? (
         <div className="mt-4 p-3 bg-gray-100 rounded">
           <h3 className="text-gray-700 font-bold">Not on YouTube</h3>
           <p className="text-xs text-gray-600 mt-1">
             Navigate to a YouTube video to load subtitles.
           </p>
         </div>
+      ) : (
+        <div className="mt-4 p-3 bg-gray-200 rounded">
+          <h3 className="text-gray-600 font-bold">Extension Disabled</h3>
+          <p className="text-xs text-gray-500 mt-1">
+            Enable the extension to use subtitle features.
+          </p>
+        </div>
       )}
 
-      <button onClick={onLogout} className="bg-black text-yellow-400 p-2 rounded font-bold mt-2">
+      <button
+        onClick={onLogout}
+        className="bg-black text-yellow-400 p-2 rounded font-bold mt-2">
         Logout
       </button>
     </div>
@@ -200,7 +278,9 @@ function IndexPopup() {
   const [showRegister, setShowRegister] = useState(false)
 
   useEffect(() => {
-    secureStorage.setPassword("bundai-secure-key").then(() => setSecureReady(true))
+    secureStorage
+      .setPassword("bundai-secure-key")
+      .then(() => setSecureReady(true))
   }, [secureStorage])
 
   useEffect(() => {
