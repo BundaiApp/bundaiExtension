@@ -2,8 +2,11 @@ import { ApolloProvider, useMutation } from "@apollo/client"
 import cssText from "data-text:~style.css"
 import kuromoji from "kuromoji"
 import type { PlasmoCSConfig } from "plasmo"
+import React, { useEffect, useRef, useState } from "react"
+import { createRoot } from "react-dom/client"
 import { toRomaji } from "wanakana"
 
+import WordCard from "../components/WordCard" // Import the WordCard component
 import client from "../graphql"
 import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
 
@@ -70,7 +73,8 @@ class CustomSubtitleContainer {
   private subtitleContainer: HTMLDivElement | null = null
   private subtitle1Element: HTMLDivElement | null = null
   private subtitle2Element: HTMLDivElement | null = null
-  private wordCardElement: HTMLDivElement | null = null
+  private wordCardContainer: HTMLDivElement | null = null
+  private wordCardRoot: any = null // React root for WordCard
   private updateInterval: NodeJS.Timeout | null = null
   private observer: MutationObserver | null = null
   private isEnabled: boolean = false // Track if extension is enabled
@@ -106,17 +110,15 @@ class CustomSubtitleContainer {
   private wordCard: {
     word: string
     mouseX: number
+    mouseY: number
     isVisible: boolean
     isSticky: boolean
-    entry: JMDictEntry | null
-    isLoading: boolean
   } = {
     word: "",
     mouseX: 0,
+    mouseY: 0,
     isVisible: false,
-    isSticky: false,
-    entry: null,
-    isLoading: false
+    isSticky: false
   }
 
   // Japanese processing
@@ -367,8 +369,8 @@ class CustomSubtitleContainer {
     this.applySubtitleStyles(this.subtitle2Element, this.settings.subtitle2)
     this.subtitleContainer.appendChild(this.subtitle2Element)
 
-    // Create word card
-    this.createWordCard()
+    // Create React WordCard container
+    this.createReactWordCard()
 
     // Append to body
     document.body.appendChild(this.subtitleContainer)
@@ -406,28 +408,49 @@ class CustomSubtitleContainer {
       this.wordCard = {
         word: "",
         mouseX: 0,
+        mouseY: 0,
         isVisible: false,
-        isSticky: false,
-        entry: null,
-        isLoading: false
+        isSticky: false
       }
     }
   }
 
-  private createWordCard(): void {
-    this.wordCardElement = document.createElement("div")
-    this.wordCardElement.className = "custom-word-card"
-    this.wordCardElement.style.cssText = `
-      position: fixed;
-      z-index: 10000;
-      pointer-events: auto;
-      opacity: 0;
-      transition: opacity 0.25s ease;
-      user-select: none;
-      display: none;
-    `
+  private createReactWordCard(): void {
+    // Create container for React WordCard
+    this.wordCardContainer = document.createElement("div")
+    this.wordCardContainer.className = "react-word-card-container"
 
-    document.body.appendChild(this.wordCardElement)
+    // Append to body (not to subtitle container to avoid z-index issues)
+    document.body.appendChild(this.wordCardContainer)
+
+    // Create React root and render WordCard
+    this.wordCardRoot = createRoot(this.wordCardContainer)
+    this.renderWordCard()
+  }
+
+  private renderWordCard(): void {
+    if (!this.wordCardRoot || !this.wordCardContainer) return
+
+    const containerRect =
+      this.subtitleContainer?.getBoundingClientRect() || null
+
+    this.wordCardRoot.render(
+      <WordCardManager
+        wordCard={this.wordCard}
+        containerRect={containerRect}
+        onClose={this.handleCardClose.bind(this)}
+      />
+    )
+  }
+
+  private handleCardClose(): void {
+    this.wordCard = {
+      ...this.wordCard,
+      isVisible: false,
+      isSticky: false,
+      word: ""
+    }
+    this.renderWordCard()
   }
 
   private applySubtitleStyles(
@@ -565,7 +588,7 @@ class CustomSubtitleContainer {
 
       wordElement.addEventListener("mouseenter", (e) => {
         const rect = (e.target as HTMLElement).getBoundingClientRect()
-        this.handleWordHover(word, rect.left + rect.width / 2)
+        this.handleWordHover(word, rect.left + rect.width / 2, rect.top)
       })
 
       wordElement.addEventListener("mouseleave", () => {
@@ -575,7 +598,7 @@ class CustomSubtitleContainer {
       wordElement.addEventListener("click", (e) => {
         e.stopPropagation()
         const rect = (e.target as HTMLElement).getBoundingClientRect()
-        this.handleWordClick(word, rect.left + rect.width / 2)
+        this.handleWordClick(word, rect.left + rect.width / 2, rect.top)
       })
 
       // Add styling (YouTube approach)
@@ -631,239 +654,40 @@ class CustomSubtitleContainer {
     // }
   }
 
-  // Updated word hover handler (simplified like YouTube manipulator)
-  private handleWordHover(word: string, mouseX: number): void {
+  // Updated word hover handler (now includes mouseY)
+  private handleWordHover(word: string, mouseX: number, mouseY: number): void {
     // Update word card state
     this.wordCard = {
       word,
       mouseX,
+      mouseY,
       isVisible: true,
-      isSticky: false,
-      entry: this.wordCard.word === word ? this.wordCard.entry : null,
-      isLoading: word !== this.wordCard.word
+      isSticky: false
     }
 
-    this.showWordCard()
+    this.renderWordCard()
   }
 
   // Updated word leave handler
   private handleWordLeave(): void {
     if (!this.wordCard.isSticky) {
       this.wordCard.isVisible = false
-      this.hideWordCard()
+      this.renderWordCard()
     }
   }
 
-  // Updated word click handler
-  private handleWordClick(word: string, mouseX: number): void {
+  // Updated word click handler (now includes mouseY)
+  private handleWordClick(word: string, mouseX: number, mouseY: number): void {
     // Update word card state
     this.wordCard = {
       word,
       mouseX,
+      mouseY,
       isVisible: true,
-      isSticky: true,
-      entry: this.wordCard.word === word ? this.wordCard.entry : null,
-      isLoading: word !== this.wordCard.word
+      isSticky: true
     }
 
-    this.showWordCard()
-  }
-
-  // Simplified showWordCard method
-  private async showWordCard(): Promise<void> {
-    if (!window.jmdictLoaded || !this.wordCardElement) return
-
-    // Only fetch dictionary data if it's a new word or we don't have data
-    if (this.wordCard.isLoading || !this.wordCard.entry) {
-      this.wordCard.isLoading = true
-      this.updateWordCardContent()
-
-      // Find dictionary entry
-      let entry = window.jmdictIndex?.[this.wordCard.word]
-      if (!entry) {
-        entry = window.jmdictKanaIndex?.[this.wordCard.word]
-      }
-
-      this.wordCard.entry = entry || null
-      this.wordCard.isLoading = false
-    }
-
-    // Update content and position
-    this.updateWordCardContent()
-    this.positionWordCard()
-
-    // Show the card
-    if (this.wordCardElement && this.wordCard.isVisible) {
-      this.wordCardElement.style.display = "block"
-      this.wordCardElement.style.opacity = "1"
-    }
-
-    // Save to flashcard if sticky and we have an entry
-    if (this.wordCard.isSticky && this.wordCard.entry) {
-      this.saveToFlashcard(this.wordCard.word, this.wordCard.entry)
-    }
-  }
-
-  private hideWordCard(): void {
-    if (!this.wordCardElement) return
-
-    this.wordCardElement.style.opacity = "0"
-
-    setTimeout(() => {
-      if (!this.wordCard.isVisible && this.wordCardElement) {
-        this.wordCardElement.style.display = "none"
-      }
-    }, 250)
-  }
-
-  // Updated positioning method (similar to React component)
-  private positionWordCard(): void {
-    if (!this.wordCardElement || !this.subtitleContainer) return
-
-    // Force layout calculation
-    this.wordCardElement.style.visibility = "hidden"
-    this.wordCardElement.style.display = "block"
-
-    const cardRect = this.wordCardElement.getBoundingClientRect()
-    const cardWidth = Math.max(cardRect.width, 300)
-    const cardHeight = cardRect.height
-    const margin = 12
-
-    const containerRect = this.subtitleContainer.getBoundingClientRect()
-    let left = this.wordCard.mouseX - cardWidth / 2
-
-    // Clamp to container bounds (like React component)
-    left = Math.max(
-      containerRect.left,
-      Math.min(left, containerRect.right - cardWidth)
-    )
-
-    const top = containerRect.top - cardHeight - margin
-
-    // Apply position
-    this.wordCardElement.style.left = `${left}px`
-    this.wordCardElement.style.top = `${top}px`
-    this.wordCardElement.style.visibility = "visible"
-  }
-
-  // Update the word card styling to use Tailwind-like approach
-  private updateWordCardContent(): void {
-    if (!this.wordCardElement) return
-
-    let romaji = ""
-    try {
-      if (
-        this.wordCard.entry &&
-        Array.isArray(this.wordCard.entry.kana) &&
-        this.wordCard.entry.kana[0]
-      ) {
-        romaji = toRomaji(this.wordCard.entry.kana[0])
-      } else if (this.wordCard.word) {
-        romaji = toRomaji(this.wordCard.word)
-      }
-    } catch (e) {
-      console.error("Romaji conversion error:", e)
-      romaji = ""
-    }
-
-    const buttons = `
-    <div style="position: absolute; top: 8px; right: 8px; display: flex; gap: 8px;">
-      <button onclick="alert('Add action here')" 
-              style="background: none; border: none; color: black; font-size: 22px; cursor: pointer; padding: 4px; opacity: 0.7; line-height: 1; transition: opacity 0.2s;" 
-              onmouseover="this.style.opacity='1'" 
-              onmouseout="this.style.opacity='0.7'">+</button>
-      <button onclick="this.closest('.custom-word-card').style.opacity='0'; setTimeout(() => this.closest('.custom-word-card').style.display='none', 250)" 
-              style="background: none; border: none; color: black; font-size: 22px; cursor: pointer; padding: 4px; opacity: 0.7; line-height: 1; transition: opacity 0.2s;" 
-              onmouseover="this.style.opacity='1'" 
-              onmouseout="this.style.opacity='0.7'">×</button>
-    </div>
-  `
-
-    // Base card styles (Tailwind-like)
-    const cardStyles = `
-      background: #fbbf24; 
-      color: black; 
-      border-radius: 8px; 
-      padding: 16px; 
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3); 
-      min-width: 200px; 
-      max-width: 300px; 
-      font-size: 18px; 
-      line-height: 1.4; 
-      border: 2px solid black; 
-      position: relative;
-      font-family: Arial, sans-serif;
-    `
-
-    if (this.wordCard.isLoading) {
-      this.wordCardElement.innerHTML = `
-        <div style="${cardStyles}">
-          ${buttons}
-          <div style="font-size: 24px; font-weight: 800; margin-bottom: 4px;">${this.escapeHtml(this.wordCard.word)}</div>
-          <div style="font-size: 16px; opacity: 0.7;">Loading...</div>
-        </div>
-      `
-    } else if (this.wordCard.entry) {
-      const kanjiElements = this.wordCard.entry.kanji
-        ? this.wordCard.entry.kanji
-            .filter((k) => typeof k === "string" && /[\u4E00-\u9FAF]/.test(k))
-            .map(
-              (kanji) =>
-                `<span style="display: inline-block; background: black; color: #fde68a; padding: 8px 12px; border-radius: 12px; font-size: 20px; border: 1px solid #d97706; margin-right: 8px; margin-bottom: 8px;">${this.escapeHtml(kanji)}</span>`
-            )
-            .join("")
-        : ""
-
-      const meanings = this.wordCard.entry.senses
-        ? this.wordCard.entry.senses
-            .flatMap((sense) => sense.gloss)
-            .filter(Boolean)
-            .map(
-              (gloss) =>
-                `<span style="display: inline-block; background: black; color: #fef3c7; padding: 6px 12px; border-radius: 16px; font-size: 16px; border: 1px solid #d97706; margin-right: 8px; margin-bottom: 8px;">${this.escapeHtml(gloss)}</span>`
-            )
-            .join("")
-        : ""
-
-      this.wordCardElement.innerHTML = `
-        <div style="${cardStyles}">
-        ${buttons}
-          <div style="font-size: 24px; font-weight: 800; margin-bottom: 4px;">${this.escapeHtml(this.wordCard.word)}</div>
-          ${romaji ? `<div style="font-size: 16px; opacity: 0.5; font-weight: bold; margin-bottom: 8px;">${this.escapeHtml(romaji)}</div>` : ""}
-          ${kanjiElements ? `<div style="margin: 8px 0;"><span style="font-size: 16px; opacity: 0.8; margin-right: 8px;">Kanji: </span><div style="display: inline;">${kanjiElements}</div></div>` : ""}
-          ${meanings ? `<div style="margin: 8px 0;"><div style="font-size: 16px; opacity: 0.8; margin-bottom: 4px;">Meanings:</div><div>${meanings}</div></div>` : ""}
-        </div>
-      `
-    } else {
-      this.wordCardElement.innerHTML = `
-        <div style="${cardStyles}">
-        ${buttons}
-          <div style="font-size: 24px; font-weight: 800; margin-bottom: 4px;">${this.escapeHtml(this.wordCard.word)}</div>
-          ${romaji ? `<div style="font-size: 16px; opacity: 0.5; font-weight: bold; margin-bottom: 8px;">${this.escapeHtml(romaji)}</div>` : ""}
-          <div style="font-size: 16px; opacity: 0.7;">No dictionary entry found</div>
-        </div>
-      `
-    }
-  }
-
-  private async saveToFlashcard(
-    word: string,
-    entry: JMDictEntry
-  ): Promise<void> {
-    try {
-      // This would integrate with your GraphQL mutation
-      console.log("Saving flashcard for word:", word, entry)
-
-      // You can add the actual GraphQL mutation here
-      // const kanjiName = entry.kanji && entry.kanji.length > 0 ? entry.kanji[0] : word
-      // const hiragana = entry.kana && entry.kana.length > 0 ? entry.kana[0] : word
-      // const meanings = entry.senses ? entry.senses.flatMap(s => s.gloss).filter(Boolean) : []
-      // const quizAnswers = [...(entry.kana || []), ...(entry.kanji || [])].filter(Boolean)
-
-      // await addFlashCard({ variables: { userId, kanjiName, hiragana, meanings, quizAnswers } })
-    } catch (error) {
-      console.error("Failed to save flashcard:", error)
-    }
+    this.renderWordCard()
   }
 
   private isJapaneseText(text: string): boolean {
@@ -888,9 +712,15 @@ class CustomSubtitleContainer {
       this.subtitle2Element = null
     }
 
-    if (this.wordCardElement) {
-      this.wordCardElement.remove()
-      this.wordCardElement = null
+    // Clean up React WordCard
+    if (this.wordCardRoot) {
+      this.wordCardRoot.unmount()
+      this.wordCardRoot = null
+    }
+
+    if (this.wordCardContainer) {
+      this.wordCardContainer.remove()
+      this.wordCardContainer = null
     }
 
     // Reset caches
@@ -901,10 +731,9 @@ class CustomSubtitleContainer {
     this.wordCard = {
       word: "",
       mouseX: 0,
+      mouseY: 0,
       isVisible: false,
-      isSticky: false,
-      entry: null,
-      isLoading: false
+      isSticky: false
     }
   }
 
@@ -1250,6 +1079,33 @@ class CustomSubtitleContainer {
 
     return null
   }
+}
+
+// React component wrapper for WordCard management
+const WordCardManager: React.FC<{
+  wordCard: {
+    word: string
+    mouseX: number
+    mouseY: number
+    isVisible: boolean
+    isSticky: boolean
+  }
+  containerRect: DOMRect | null
+  onClose: () => void
+}> = ({ wordCard, containerRect, onClose }) => {
+  return (
+    <ApolloProvider client={client}>
+      <WordCard
+        word={wordCard.word}
+        mouseX={wordCard.mouseX}
+        mouseY={wordCard.mouseY}
+        isVisible={wordCard.isVisible}
+        isSticky={wordCard.isSticky}
+        onClose={onClose}
+        containerRect={containerRect}
+      />
+    </ApolloProvider>
+  )
 }
 
 // Initialize the custom subtitle container
