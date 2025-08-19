@@ -1,3 +1,4 @@
+// Modified index.tsx
 import { useEffect, useState } from "react"
 
 import Login from "./login"
@@ -39,14 +40,14 @@ function MainPage({ onLogout }) {
   const [secureStorage] = useState(() => new SecureStorage())
   const [currentVideoId, setCurrentVideoId] = useState<string | null>(null)
   const [currentUrl, setCurrentUrl] = useState<string>("")
+  const [cachedSubtitles, setCachedSubtitles] = useState<Record<
+    string,
+    string[]
+  > | null>(null)
+  const [subtitleError, setSubtitleError] = useState<string | null>(null)
+  const [isFetchingSubtitles, setIsFetchingSubtitles] = useState(false)
 
-  // Use the dynamic video ID, fallback to null if no video ID found
-  const {
-    subtitles,
-    loading: subtitleLoading,
-    error,
-    refetch
-  } = useSubtitle(currentVideoId)
+  // Don't use useSubtitle hook - we'll manage subtitle fetching manually
 
   // Function to get current tab URL and extract video ID
   const getCurrentVideoId = async () => {
@@ -60,7 +61,13 @@ function MainPage({ onLogout }) {
       if (tab && tab.url) {
         setCurrentUrl(tab.url)
         const videoId = extractVideoId(tab.url)
-        setCurrentVideoId(videoId)
+
+        // Only update video ID if it actually changed
+        if (videoId !== currentVideoId) {
+          setCurrentVideoId(videoId)
+          // Load cached subtitles for this video if available
+          loadCachedSubtitles(videoId)
+        }
 
         console.log("Current URL:", tab.url)
         console.log("Extracted Video ID:", videoId)
@@ -70,6 +77,72 @@ function MainPage({ onLogout }) {
     } catch (error) {
       console.error("Error getting current tab:", error)
       return null
+    }
+  }
+
+  // Load cached subtitles from Chrome storage
+  const loadCachedSubtitles = async (videoId: string | null) => {
+    if (!videoId) {
+      setCachedSubtitles(null)
+      return
+    }
+
+    try {
+      const cacheKey = `subtitles_cache_${videoId}`
+      const result = await chrome.storage.local.get(cacheKey)
+      const cached = result[cacheKey]
+
+      if (cached && cached.expiry > Date.now()) {
+        setCachedSubtitles(cached.data)
+        setSubtitleError(null)
+        console.log("Loaded cached subtitles for video:", videoId)
+      } else {
+        // Cache expired or doesn't exist
+        setCachedSubtitles(null)
+        console.log("No valid cached subtitles for video:", videoId)
+      }
+    } catch (error) {
+      console.error("Error loading cached subtitles:", error)
+      setCachedSubtitles(null)
+    }
+  }
+
+  // Fetch subtitles from API and cache them
+  const fetchAndCacheSubtitles = async (videoId: string) => {
+    if (!videoId) return
+
+    setIsFetchingSubtitles(true)
+    setSubtitleError(null)
+
+    try {
+      // Use the same logic as your useSubtitle hook
+      const res = await fetch(
+        `http://localhost:8000/subtitles/${videoId}?subtitle_format=vtt`
+      )
+
+      if (!res.ok) {
+        const errorData = await res.json()
+        throw new Error(errorData.detail || "Failed to fetch subtitles.")
+      }
+
+      const subtitles = await res.json()
+
+      // Cache the result
+      const cacheKey = `subtitles_cache_${videoId}`
+      const cacheData = {
+        data: subtitles,
+        timestamp: Date.now(),
+        expiry: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+      }
+      await chrome.storage.local.set({ [cacheKey]: cacheData })
+
+      setCachedSubtitles(subtitles)
+      console.log("Fetched and cached subtitles for video:", videoId)
+    } catch (error) {
+      console.error("Error fetching subtitles:", error)
+      setSubtitleError(error.message || "Failed to fetch subtitles")
+    } finally {
+      setIsFetchingSubtitles(false)
     }
   }
 
@@ -115,37 +188,23 @@ function MainPage({ onLogout }) {
   useEffect(() => {
     if (!secureReady) return
     secureStorage.get("extensionEnabled").then((value) => {
-      const enabledValue = typeof value === "boolean" ? value : true // Default to enabled
+      const enabledValue = typeof value === "boolean" ? value : true
       setEnabled(enabledValue)
       setLoading(false)
-
-      // Notify content script of initial state
       notifyContentScript(enabledValue)
     })
   }, [secureReady, secureStorage])
 
-  // Get current video ID when component mounts
+  // Get current video ID when component mounts and load cached subtitles
   useEffect(() => {
-    getCurrentVideoId()
-  }, [])
-
-  // Listen for tab changes (when user navigates to different videos)
-  useEffect(() => {
-    const handleTabChange = () => {
-      getCurrentVideoId()
-    }
-
-    // Listen for tab updates
-    if (chrome.tabs && chrome.tabs.onUpdated) {
-      chrome.tabs.onUpdated.addListener(handleTabChange)
-    }
-
-    // Cleanup listener
-    return () => {
-      if (chrome.tabs && chrome.tabs.onUpdated) {
-        chrome.tabs.onUpdated.removeListener(handleTabChange)
+    const initializeVideoData = async () => {
+      const videoId = await getCurrentVideoId()
+      if (videoId) {
+        await loadCachedSubtitles(videoId)
       }
     }
+
+    initializeVideoData()
   }, [])
 
   const handleToggle = async (e) => {
@@ -159,8 +218,17 @@ function MainPage({ onLogout }) {
     await notifyContentScript(newValue)
   }
 
-  const handleRefreshVideoId = () => {
-    getCurrentVideoId()
+  const handleRefreshVideoId = async () => {
+    const videoId = await getCurrentVideoId()
+    if (videoId) {
+      await loadCachedSubtitles(videoId)
+    }
+  }
+
+  // Function to fetch subtitles when user needs them
+  const handleFetchSubtitles = async () => {
+    if (!currentVideoId) return
+    await fetchAndCacheSubtitles(currentVideoId)
   }
 
   const isYouTubePage = currentUrl.includes("youtube.com")
@@ -230,14 +298,37 @@ function MainPage({ onLogout }) {
         <span className="underline">browser://extensions</span>.
       </div>
 
-      {/* Only show subtitles section if extension is enabled */}
+      {/* Conditional subtitle section */}
       {enabled && isYouTubePage && currentVideoId ? (
-        <SubtitlesSection
-          subtitles={subtitles}
-          error={error}
-          subtitleLoading={subtitleLoading}
-          currentVideoId={currentVideoId}
-        />
+        <div className="mt-4">
+          {cachedSubtitles && Object.keys(cachedSubtitles).length > 0 ? (
+            <SubtitlesSection
+              subtitles={cachedSubtitles}
+              error={subtitleError}
+              subtitleLoading={isFetchingSubtitles}
+              currentVideoId={currentVideoId}
+            />
+          ) : (
+            <div>
+              <div className="mb-3">
+                <h3 className="text-black font-bold">Available Subtitles</h3>
+                {subtitleError && (
+                  <p className="text-xs text-red-700 mt-1">{subtitleError}</p>
+                )}
+                <p className="text-xs text-gray-600 mt-1">
+                  No cached subtitles found. Click below to fetch subtitles for
+                  this video.
+                </p>
+              </div>
+              <button
+                onClick={handleFetchSubtitles}
+                disabled={isFetchingSubtitles}
+                className="w-full px-3 py-2 bg-green-500 text-white rounded font-semibold hover:bg-green-600 disabled:bg-gray-400">
+                {isFetchingSubtitles ? "Fetching..." : "Fetch Subtitles"}
+              </button>
+            </div>
+          )}
+        </div>
       ) : enabled && isYouTubePage ? (
         <div className="mt-4 p-3 bg-red-100 rounded">
           <h3 className="text-red-700 font-bold">Video ID Not Found</h3>
@@ -271,6 +362,7 @@ function MainPage({ onLogout }) {
   )
 }
 
+// Rest of the component remains the same...
 function IndexPopup() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [secureReady, setSecureReady] = useState(false)

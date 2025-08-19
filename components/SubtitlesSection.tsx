@@ -1,180 +1,242 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from "react"
 
 interface SubtitlesSectionProps {
-  subtitles: Record<string, string[]>;
-  subtitleLoading: boolean;
-  error: string | null;
-  currentVideoId: string | null; // Get video ID from parent instead of extracting it again
+  subtitles: Record<string, string[]>
+  subtitleLoading: boolean
+  error: string | null
+  currentVideoId: string | null
 }
 
-const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({ subtitles, subtitleLoading, error, currentVideoId }) => {
+const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
+  subtitles,
+  subtitleLoading,
+  error,
+  currentVideoId
+}) => {
   // States to store the selected subtitle URLs
-  const [selectedSubtitle1, setSelectedSubtitle1] = useState<string | null>(null);
-  const [selectedSubtitle2, setSelectedSubtitle2] = useState<string | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState<string>('');
-  const [subtitlesLoaded, setSubtitlesLoaded] = useState<{track1: boolean, track2: boolean}>({track1: false, track2: false});
+  const [selectedSubtitle1, setSelectedSubtitle1] = useState<string | null>(
+    null
+  )
+  const [selectedSubtitle2, setSelectedSubtitle2] = useState<string | null>(
+    null
+  )
+  const [loadingStatus, setLoadingStatus] = useState<string>("")
+  const [subtitlesLoaded, setSubtitlesLoaded] = useState<{
+    track1: boolean
+    track2: boolean
+  }>({ track1: false, track2: false })
+
+  // Track the previous video ID to detect changes
+  const previousVideoIdRef = useRef<string | null>(null)
+  const [sessionLoadedTracks, setSessionLoadedTracks] = useState<{
+    track1: boolean
+    track2: boolean
+  }>({ track1: false, track2: false })
 
   // Load saved selections when video ID changes
   useEffect(() => {
-    if (!currentVideoId) return;
+    if (!currentVideoId) return
 
     const loadSavedSelections = async () => {
       try {
         const result = await chrome.storage.local.get([
           `subtitle1_${currentVideoId}`,
           `subtitle2_${currentVideoId}`,
-          `subtitlesEverLoaded_${currentVideoId}` // Track if subtitles were ever loaded for this video
-        ]);
+          `subtitlesSessionLoaded_${currentVideoId}`
+        ])
 
-        const savedSubtitle1 = result[`subtitle1_${currentVideoId}`];
-        const savedSubtitle2 = result[`subtitle2_${currentVideoId}`];
-        const everLoaded = result[`subtitlesEverLoaded_${currentVideoId}`] || false;
+        const savedSubtitle1 = result[`subtitle1_${currentVideoId}`]
+        const savedSubtitle2 = result[`subtitle2_${currentVideoId}`]
+        const sessionLoaded = result[
+          `subtitlesSessionLoaded_${currentVideoId}`
+        ] || {
+          track1: false,
+          track2: false
+        }
 
         if (savedSubtitle1) {
-          setSelectedSubtitle1(savedSubtitle1);
+          setSelectedSubtitle1(savedSubtitle1)
         }
         if (savedSubtitle2) {
-          setSelectedSubtitle2(savedSubtitle2);
+          setSelectedSubtitle2(savedSubtitle2)
         }
 
-        // Mark as loaded if they were ever loaded before (prevents auto-loading)
-        if (everLoaded) {
-          setSubtitlesLoaded({track1: true, track2: true});
-        }
+        // Set session loaded state and subtitles loaded state
+        setSessionLoadedTracks(sessionLoaded)
+        setSubtitlesLoaded(sessionLoaded)
       } catch (error) {
-        console.error('Error loading saved selections:', error);
+        console.error("Error loading saved selections:", error)
       }
-    };
+    }
 
-    loadSavedSelections();
-  }, [currentVideoId]);
+    loadSavedSelections()
+  }, [currentVideoId])
 
   // Save selections to storage
   const saveSelection = async (trackNumber: 1 | 2, url: string | null) => {
-    if (!currentVideoId) return;
+    if (!currentVideoId) return
 
     try {
-      const key = `subtitle${trackNumber}_${currentVideoId}`;
+      const key = `subtitle${trackNumber}_${currentVideoId}`
       if (url) {
-        await chrome.storage.local.set({ [key]: url });
+        await chrome.storage.local.set({ [key]: url })
       } else {
-        await chrome.storage.local.remove(key);
+        await chrome.storage.local.remove(key)
       }
     } catch (error) {
-      console.error('Error saving selection:', error);
+      console.error("Error saving selection:", error)
     }
-  };
+  }
 
   // Function to send subtitle URL to content script
-  const loadSubtitleInContentScript = async (url: string, trackNumber: 1 | 2) => {
+  const loadSubtitleInContentScript = async (
+    url: string,
+    trackNumber: 1 | 2
+  ) => {
     try {
-      setLoadingStatus(`Loading subtitle ${trackNumber}...`);
-      
+      setLoadingStatus(`Loading subtitle ${trackNumber}...`)
+
       // Get the active tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true
+      })
+
       if (!tab.id) {
-        throw new Error('No active tab found');
+        throw new Error("No active tab found")
       }
 
       // Send message to content script
       const response = await chrome.tabs.sendMessage(tab.id, {
-        action: 'loadSubtitle',
+        action: "loadSubtitle",
         url: url,
         trackNumber: trackNumber
-      });
+      })
 
       if (response.success) {
-        setLoadingStatus(`Subtitle ${trackNumber} loaded successfully!`);
-        setSubtitlesLoaded(prev => ({
+        setLoadingStatus(`Subtitle ${trackNumber} loaded successfully!`)
+        setSubtitlesLoaded((prev) => ({
           ...prev,
           [`track${trackNumber}`]: true
-        }));
+        }))
 
-        // Mark that subtitles have been loaded for this video (prevents future auto-loading)
+        // Mark that subtitles have been loaded for this session
         if (currentVideoId) {
-          await chrome.storage.local.set({ [`subtitlesEverLoaded_${currentVideoId}`]: true });
+          const newSessionState = {
+            ...sessionLoadedTracks,
+            [`track${trackNumber}`]: true
+          }
+          setSessionLoadedTracks(newSessionState)
+          await chrome.storage.local.set({
+            [`subtitlesSessionLoaded_${currentVideoId}`]: newSessionState
+          })
         }
 
-        setTimeout(() => setLoadingStatus(''), 3000); // Clear status after 3 seconds
+        setTimeout(() => setLoadingStatus(""), 3000)
       } else {
-        throw new Error(response.error || 'Failed to load subtitle');
+        throw new Error(response.error || "Failed to load subtitle")
       }
     } catch (error) {
-      console.error('Error loading subtitle:', error);
-      setLoadingStatus(`Error loading subtitle ${trackNumber}: ${error.message}`);
-      setTimeout(() => setLoadingStatus(''), 5000);
+      console.error("Error loading subtitle:", error)
+      setLoadingStatus(
+        `Error loading subtitle ${trackNumber}: ${error.message}`
+      )
+      setTimeout(() => setLoadingStatus(""), 5000)
     }
-  };
+  }
 
-  // Handle changing Subtitle 1 selection
-  const handleSubtitle1Change = async (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const url = event.target.value || null;
-    setSelectedSubtitle1(url);
-    await saveSelection(1, url);
-    
-    if (url) {
-      await loadSubtitleInContentScript(url, 1);
-    } else {
-      // Reset loaded status when clearing selection
-      setSubtitlesLoaded(prev => ({...prev, track1: false}));
-    }
-  };
+  // Handle changing Subtitle 1 selection - ONLY load if user actively changes it
+  const handleSubtitle1Change = async (
+    event: React.ChangeEvent<HTMLSelectElement>
+  ) => {
+    const url = event.target.value || null
+    const previousSelection = selectedSubtitle1
 
-  // Handle changing Subtitle 2 selection
-  const handleSubtitle2Change = async (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const url = event.target.value || null;
-    setSelectedSubtitle2(url);
-    await saveSelection(2, url);
-    
-    if (url) {
-      await loadSubtitleInContentScript(url, 2);
-    } else {
+    setSelectedSubtitle1(url)
+    await saveSelection(1, url)
+
+    // Only load subtitle if user actually changed the selection (not just loading saved state)
+    if (url && url !== previousSelection) {
+      await loadSubtitleInContentScript(url, 1)
+    } else if (!url) {
       // Reset loaded status when clearing selection
-      setSubtitlesLoaded(prev => ({...prev, track2: false}));
+      setSubtitlesLoaded((prev) => ({ ...prev, track1: false }))
+      // Clear session state
+      if (currentVideoId) {
+        const newSessionState = { ...sessionLoadedTracks, track1: false }
+        setSessionLoadedTracks(newSessionState)
+        await chrome.storage.local.set({
+          [`subtitlesSessionLoaded_${currentVideoId}`]: newSessionState
+        })
+      }
     }
-  };
+  }
+
+  // Handle changing Subtitle 2 selection - ONLY load if user actively changes it
+  const handleSubtitle2Change = async (
+    event: React.ChangeEvent<HTMLSelectElement>
+  ) => {
+    const url = event.target.value || null
+    const previousSelection = selectedSubtitle2
+
+    setSelectedSubtitle2(url)
+    await saveSelection(2, url)
+
+    // Only load subtitle if user actually changed the selection (not just loading saved state)
+    if (url && url !== previousSelection) {
+      await loadSubtitleInContentScript(url, 2)
+    } else if (!url) {
+      // Reset loaded status when clearing selection
+      setSubtitlesLoaded((prev) => ({ ...prev, track2: false }))
+      // Clear session state
+      if (currentVideoId) {
+        const newSessionState = { ...sessionLoadedTracks, track2: false }
+        setSessionLoadedTracks(newSessionState)
+        await chrome.storage.local.set({
+          [`subtitlesSessionLoaded_${currentVideoId}`]: newSessionState
+        })
+      }
+    }
+  }
 
   // Clear all selections
   const clearAllSelections = async () => {
-    setSelectedSubtitle1(null);
-    setSelectedSubtitle2(null);
-    setSubtitlesLoaded({track1: false, track2: false});
-    await saveSelection(1, null);
-    await saveSelection(2, null);
-    
-    // Also clear the "ever loaded" flag so subtitles can auto-load again if re-selected
+    setSelectedSubtitle1(null)
+    setSelectedSubtitle2(null)
+    setSessionLoadedTracks({ track1: false, track2: false })
+    setSubtitlesLoaded({ track1: false, track2: false })
+    await saveSelection(1, null)
+    await saveSelection(2, null)
+
     if (currentVideoId) {
-      await chrome.storage.local.remove(`subtitlesEverLoaded_${currentVideoId}`);
+      await chrome.storage.local.remove(
+        `subtitlesSessionLoaded_${currentVideoId}`
+      )
     }
-  };
+  }
 
-  // Auto-load subtitles only when they haven't been loaded yet
+  // Reset session loaded status when video changes
   useEffect(() => {
-    if (subtitles && Object.keys(subtitles).length > 0 && currentVideoId) {
-      // Only auto-load if subtitle is selected but not yet loaded
-      if (selectedSubtitle1 && !subtitlesLoaded.track1) {
-        loadSubtitleInContentScript(selectedSubtitle1, 1);
-      }
-      if (selectedSubtitle2 && !subtitlesLoaded.track2) {
-        loadSubtitleInContentScript(selectedSubtitle2, 2);
-      }
+    const hasVideoIdChanged = previousVideoIdRef.current !== currentVideoId
+    previousVideoIdRef.current = currentVideoId
+
+    if (hasVideoIdChanged) {
+      setSessionLoadedTracks({ track1: false, track2: false })
+      setSubtitlesLoaded({ track1: false, track2: false })
     }
-  }, [subtitles, currentVideoId, selectedSubtitle1, selectedSubtitle2]);
-
-  // Reset loaded status when video changes
-  useEffect(() => {
-    setSubtitlesLoaded({track1: false, track2: false});
-  }, [currentVideoId]);
+  }, [currentVideoId])
 
   return (
     <div className="mt-4">
       <h3 className="text-black font-bold">Available Subtitles</h3>
 
-      {subtitleLoading && <p className="text-xs text-gray-800">Loading subtitles...</p>}
+      {subtitleLoading && (
+        <p className="text-xs text-gray-800">Loading subtitles...</p>
+      )}
       {error && <p className="text-xs text-red-700">{error}</p>}
       {loadingStatus && (
-        <p className={`text-xs ${loadingStatus.includes('Error') ? 'text-red-700' : 'text-green-700'}`}>
+        <p
+          className={`text-xs ${loadingStatus.includes("Error") ? "text-red-700" : "text-green-700"}`}>
           {loadingStatus}
         </p>
       )}
@@ -183,39 +245,41 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({ subtitles, subtitle
         <div className="max-h-40 overflow-auto text-xs mt-2">
           {/* Dropdown for Subtitle 1 */}
           <div className="mb-4">
-            <label className="font-semibold text-black block">Subtitle 1 (Top)</label>
+            <label className="font-semibold text-black block">
+              Subtitle 1 (Top)
+            </label>
             <select
               className="w-full p-2 border border-gray-300 rounded-md text-sm"
-              value={selectedSubtitle1 || ''}
-              onChange={handleSubtitle1Change}
-            >
+              value={selectedSubtitle1 || ""}
+              onChange={handleSubtitle1Change}>
               <option value="">Select Subtitle</option>
-              {Object.entries(subtitles).map(([lang, urls]) => (
+              {Object.entries(subtitles).map(([lang, urls]) =>
                 urls.map((url, index) => (
                   <option key={`${lang}-${index}`} value={url}>
                     {lang.toUpperCase()} - Format {index + 1}
                   </option>
                 ))
-              ))}
+              )}
             </select>
           </div>
 
           {/* Dropdown for Subtitle 2 */}
           <div className="mb-4">
-            <label className="font-semibold text-black block">Subtitle 2 (Bottom)</label>
+            <label className="font-semibold text-black block">
+              Subtitle 2 (Bottom)
+            </label>
             <select
               className="w-full p-2 border border-gray-300 rounded-md text-sm"
-              value={selectedSubtitle2 || ''}
-              onChange={handleSubtitle2Change}
-            >
+              value={selectedSubtitle2 || ""}
+              onChange={handleSubtitle2Change}>
               <option value="">Select Subtitle</option>
-              {Object.entries(subtitles).map(([lang, urls]) => (
+              {Object.entries(subtitles).map(([lang, urls]) =>
                 urls.map((url, index) => (
                   <option key={`${lang}-${index}`} value={url}>
                     {lang.toUpperCase()} - Format {index + 1}
                   </option>
                 ))
-              ))}
+              )}
             </select>
           </div>
 
@@ -223,34 +287,40 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({ subtitles, subtitle
           <div className="flex gap-2 mb-4">
             <button
               onClick={clearAllSelections}
-              className="px-3 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
-            >
+              className="px-3 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600">
               Clear All
             </button>
             <button
               onClick={() => {
-                if (selectedSubtitle1) loadSubtitleInContentScript(selectedSubtitle1, 1);
-                if (selectedSubtitle2) loadSubtitleInContentScript(selectedSubtitle2, 2);
+                if (selectedSubtitle1)
+                  loadSubtitleInContentScript(selectedSubtitle1, 1)
+                if (selectedSubtitle2)
+                  loadSubtitleInContentScript(selectedSubtitle2, 2)
               }}
               className="px-3 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
-              disabled={!selectedSubtitle1 && !selectedSubtitle2}
-            >
+              disabled={!selectedSubtitle1 && !selectedSubtitle2}>
               Reload Subtitles
             </button>
           </div>
 
           {/* Display selected subtitles */}
           <div className="mt-4 p-3 bg-gray-100 rounded">
-            <h4 className="text-black font-semibold mb-2">Currently Selected</h4>
+            <h4 className="text-black font-semibold mb-2">
+              Currently Selected
+            </h4>
             <div className="space-y-1">
               <p className="text-xs">
                 <strong>Top Subtitle: </strong>
                 {selectedSubtitle1 ? (
                   <span className="text-green-600">
-                    {Object.entries(subtitles).find(([lang, urls]) => 
-                      urls.includes(selectedSubtitle1)
-                    )?.[0]?.toUpperCase() || 'Selected'}
-                    {subtitlesLoaded.track1 && <span className="ml-1 text-xs">✓</span>}
+                    {Object.entries(subtitles)
+                      .find(([lang, urls]) =>
+                        urls.includes(selectedSubtitle1)
+                      )?.[0]
+                      ?.toUpperCase() || "Selected"}
+                    {subtitlesLoaded.track1 && (
+                      <span className="ml-1 text-xs">✓</span>
+                    )}
                   </span>
                 ) : (
                   <span className="text-gray-500">None selected</span>
@@ -260,10 +330,14 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({ subtitles, subtitle
                 <strong>Bottom Subtitle: </strong>
                 {selectedSubtitle2 ? (
                   <span className="text-green-600">
-                    {Object.entries(subtitles).find(([lang, urls]) => 
-                      urls.includes(selectedSubtitle2)
-                    )?.[0]?.toUpperCase() || 'Selected'}
-                    {subtitlesLoaded.track2 && <span className="ml-1 text-xs">✓</span>}
+                    {Object.entries(subtitles)
+                      .find(([lang, urls]) =>
+                        urls.includes(selectedSubtitle2)
+                      )?.[0]
+                      ?.toUpperCase() || "Selected"}
+                    {subtitlesLoaded.track2 && (
+                      <span className="ml-1 text-xs">✓</span>
+                    )}
                   </span>
                 ) : (
                   <span className="text-gray-500">None selected</span>
@@ -278,10 +352,12 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({ subtitles, subtitle
           </div>
         </div>
       ) : (
-        !subtitleLoading && <p className="text-xs text-gray-800">No subtitles found.</p>
+        !subtitleLoading && (
+          <p className="text-xs text-gray-800">No subtitles found.</p>
+        )
       )}
     </div>
-  );
-};
+  )
+}
 
-export default SubtitlesSection;
+export default SubtitlesSection
