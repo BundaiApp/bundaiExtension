@@ -155,7 +155,7 @@ const WordCard: React.FC<WordCardProps> = ({
   const cardWidth = 300
   const margin = 12
   let left = mouseX - cardWidth / 2
-  let top = mouseY - cardHeight - margin
+  let top = containerRect.top - cardHeight - margin
 
   if (containerRect) {
     // Clamp horizontally to container bounds
@@ -206,7 +206,7 @@ const WordCard: React.FC<WordCardProps> = ({
             className="bg-none border-none text-black text-2xl cursor-pointer p-1 opacity-70 hover:opacity-100 transition-opacity"
             onClick={addCardManually}
             title="Add flashcard">
-            ＋
+            +
           </button>
           <button
             className="bg-none border-none text-black text-2xl cursor-pointer p-1 opacity-70 hover:opacity-100 transition-opacity"
@@ -248,6 +248,7 @@ const WordCard: React.FC<WordCardProps> = ({
                   {entry.senses
                     .flatMap((sense) => sense.gloss)
                     .filter(Boolean)
+                    .slice(0, 3)
                     .map((gloss, index) => (
                       <span
                         key={index}
