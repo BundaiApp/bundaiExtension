@@ -24,7 +24,7 @@ export function useSubtitle(videoId: string): UseSubtitleResult {
 
     try {
       // Fetch subtitles only in vtt format
-      const res = await fetch(`http://localhost:8000/subtitles/${videoId}?subtitle_format=vtt`);
+      const res = await fetch(`http://209.97.145.18/subtitles/${videoId}?subtitle_format=vtt`);
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.detail || 'Failed to fetch subtitles.');
