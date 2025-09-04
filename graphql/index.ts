@@ -1,7 +1,9 @@
 import { ApolloClient, InMemoryCache } from "@apollo/client"
 
 const client = new ApolloClient({
-  uri: "http://209.97.145.18/graphql", // remote server
+
+  uri: "https://bundai-e3ba97c969b0.herokuapp.com/graphql", // blueliner heroku server
+  // uri: "http://209.97.145.18/graphql", // digital ocean droplet server
   cache: new InMemoryCache({
     dataIdFromObject: (o) => (o.id != null ? String(o.id) : undefined)
   })

@@ -1,5 +1,5 @@
 // Modified index.tsx
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import Login from "./login"
 import Register from "./register"
@@ -46,6 +46,9 @@ function MainPage({ onLogout }) {
   > | null>(null)
   const [subtitleError, setSubtitleError] = useState<string | null>(null)
   const [isFetchingSubtitles, setIsFetchingSubtitles] = useState(false)
+  const inFlightRequestsRef = useRef<Set<string>>(new Set())
+
+  const DROPLET_BASE_URL = "http://209.97.145.18"
 
   // Don't use useSubtitle hook - we'll manage subtitle fetching manually
 
@@ -111,13 +114,28 @@ function MainPage({ onLogout }) {
   const fetchAndCacheSubtitles = async (videoId: string) => {
     if (!videoId) return
 
+    // Single-flight guard per videoId
+    if (inFlightRequestsRef.current.has(videoId)) {
+      console.log("[MainPage] fetch already in flight for", videoId)
+      return
+    }
+    inFlightRequestsRef.current.add(videoId)
+
     setIsFetchingSubtitles(true)
     setSubtitleError(null)
 
     try {
-      // Use the same logic as your useSubtitle hook
+      const cookieHeader = await getYouTubeCookieHeader()
+
       const res = await fetch(
-        `http://localhost:8000/subtitles/${videoId}?subtitle_format=vtt`
+        `${DROPLET_BASE_URL}/subtitles/${videoId}?subtitle_format=vtt`,
+        {
+          headers: cookieHeader
+            ? {
+                "X-Youtube-Cookies": cookieHeader
+              }
+            : undefined
+        }
       )
 
       if (!res.ok) {
@@ -125,24 +143,103 @@ function MainPage({ onLogout }) {
         throw new Error(errorData.detail || "Failed to fetch subtitles.")
       }
 
-      const subtitles = await res.json()
+      const raw = await res.json()
+      const rawSubs = raw?.subtitles ?? raw ?? {}
+      // Choose best single URL per language: prefer VTT and the last entry
+      const subtitles: Record<string, string[]> = Object.fromEntries(
+        Object.entries(rawSubs).map(([lang, entries]) => {
+          try {
+            const pickFromArray = (arr: any[]): string | null => {
+              if (!Array.isArray(arr) || arr.length === 0) return null
+              for (let i = arr.length - 1; i >= 0; i--) {
+                const item = arr[i]
+                const url = typeof item === "string" ? item : item?.url
+                const ext = typeof item === "object" ? item?.ext : undefined
+                if (
+                  (typeof ext === "string" && ext.toLowerCase() === "vtt") ||
+                  (typeof url === "string" &&
+                    (url.includes(".vtt") ||
+                      url.toLowerCase().includes("mime=text%2Fvtt")))
+                ) {
+                  return typeof url === "string" ? url : null
+                }
+              }
+              const last = arr[arr.length - 1]
+              const fallback = typeof last === "string" ? last : last?.url
+              return typeof fallback === "string" ? fallback : null
+            }
 
-      // Cache the result
-      const cacheKey = `subtitles_cache_${videoId}`
-      const cacheData = {
-        data: subtitles,
-        timestamp: Date.now(),
-        expiry: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
-      }
-      await chrome.storage.local.set({ [cacheKey]: cacheData })
+            let best: string | null = null
+            if (Array.isArray(entries)) {
+              best = pickFromArray(entries)
+            } else if (entries && typeof entries === "object") {
+              if ((entries as any).vtt) {
+                best = pickFromArray((entries as any).vtt)
+              }
+              if (!best) {
+                const flat = (Object.values(entries as any) as any[]).flat()
+                best = pickFromArray(flat)
+              }
+            }
 
+            return [lang, best ? [best] : []]
+          } catch {
+            return [lang, []]
+          }
+        })
+      )
+
+      // Cache the result (best-effort). Large payloads can exceed quotas and crash the popup.
       setCachedSubtitles(subtitles)
+      try {
+        const serialized = JSON.stringify(subtitles)
+        // Rough size check (~bytes). Skip persistent cache if too large (>3MB)
+        if (serialized.length < 3 * 1024 * 1024) {
+          const cacheKey = `subtitles_cache_${videoId}`
+          const cacheData = {
+            data: subtitles,
+            timestamp: Date.now(),
+            expiry: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+          }
+          await chrome.storage.local.set({ [cacheKey]: cacheData })
+        } else {
+          console.warn(
+            "[MainPage] Skipping persistent cache: payload too large"
+          )
+        }
+      } catch (storageErr) {
+        console.warn(
+          "[MainPage] Failed to persist cache, continuing in-memory only",
+          storageErr
+        )
+      }
+
       console.log("Fetched and cached subtitles for video:", videoId)
     } catch (error) {
       console.error("Error fetching subtitles:", error)
       setSubtitleError(error.message || "Failed to fetch subtitles")
     } finally {
       setIsFetchingSubtitles(false)
+      inFlightRequestsRef.current.delete(videoId)
+    }
+  }
+
+  // Collect YouTube cookies and return a Cookie header string
+  const getYouTubeCookieHeader = async (): Promise<string> => {
+    try {
+      console.log("[MainPage] collecting YouTube cookies")
+      const cookies = await chrome.cookies.getAll({
+        url: "https://www.youtube.com"
+      })
+      const header = cookies
+        .filter((c) => !!c.name && c.value != null)
+        .map((c) => `${c.name}=${c.value}`)
+        .join("; ")
+      console.log("[MainPage] cookies count:", cookies.length)
+      return header
+    } catch (err) {
+      console.error("[MainPage] getYouTubeCookieHeader error", err)
+      return ""
     }
   }
 
@@ -179,24 +276,29 @@ function MainPage({ onLogout }) {
 
   // Initialize secure storage
   useEffect(() => {
-    secureStorage
-      .setPassword("bundai-secure-key")
-      .then(() => setSecureReady(true))
+    console.log("[MainPage] initializing secure storage")
+    secureStorage.setPassword("bundai-secure-key").then(() => {
+      console.log("[MainPage] secure storage ready")
+      setSecureReady(true)
+    })
   }, [secureStorage])
 
   // Load extension enabled state
   useEffect(() => {
     if (!secureReady) return
+    console.log("[MainPage] loading extensionEnabled from storage")
     secureStorage.get("extensionEnabled").then((value) => {
       const enabledValue = typeof value === "boolean" ? value : true
       setEnabled(enabledValue)
       setLoading(false)
       notifyContentScript(enabledValue)
+      console.log("[MainPage] extensionEnabled:", enabledValue)
     })
   }, [secureReady, secureStorage])
 
   // Get current video ID when component mounts and load cached subtitles
   useEffect(() => {
+    console.log("[MainPage] initializeVideoData")
     const initializeVideoData = async () => {
       const videoId = await getCurrentVideoId()
       if (videoId) {
@@ -207,8 +309,53 @@ function MainPage({ onLogout }) {
     initializeVideoData()
   }, [])
 
+  // Mount/unmount and visibility debugging
+  useEffect(() => {
+    console.log("[MainPage] mounted")
+    const onError = (event) => {
+      console.error("[MainPage] window error:", event?.error || event?.message)
+    }
+    const onRejection = (event) => {
+      console.error("[MainPage] unhandledrejection:", event?.reason)
+    }
+    const onVisibility = () =>
+      console.log("[MainPage] visibilitychange", document.visibilityState)
+    const onPageHide = () => console.log("[MainPage] pagehide - popup closing")
+    window.addEventListener("error", onError)
+    window.addEventListener("unhandledrejection", onRejection)
+    document.addEventListener("visibilitychange", onVisibility)
+    window.addEventListener("pagehide", onPageHide)
+    return () => {
+      window.removeEventListener("error", onError)
+      window.removeEventListener("unhandledrejection", onRejection)
+      document.removeEventListener("visibilitychange", onVisibility)
+      window.removeEventListener("pagehide", onPageHide)
+      console.log("[MainPage] unmounted")
+    }
+  }, [])
+
+  // Key state changes
+  useEffect(() => {
+    console.log("[MainPage] state", {
+      enabled,
+      loading,
+      secureReady,
+      currentUrl,
+      currentVideoId,
+      isFetchingSubtitles
+    })
+  }, [
+    enabled,
+    loading,
+    secureReady,
+    currentUrl,
+    currentVideoId,
+    isFetchingSubtitles
+  ])
+
   const handleToggle = async (e) => {
     const newValue = e.target.checked
+    console.log("[MainPage] toggle clicked ->", newValue)
     setEnabled(newValue)
 
     // Save to storage
@@ -228,6 +375,7 @@ function MainPage({ onLogout }) {
   // Function to fetch subtitles when user needs them
   const handleFetchSubtitles = async () => {
     if (!currentVideoId) return
+    console.log("[MainPage] fetch subtitles for", currentVideoId)
     await fetchAndCacheSubtitles(currentVideoId)
   }
 

@@ -18,8 +18,8 @@ export const getStyle = () => {
 
 // Define the configuration for the content script
 export const config: PlasmoCSConfig = {
-  matches: ["*://*.youtube.com/*", "*://*/*"], // Works on YouTube and other video sites
-  all_frames: true
+  matches: ["*://*.youtube.com/watch*"],
+  all_frames: false
 }
 
 interface SubtitleCue {
@@ -336,11 +336,22 @@ class CustomSubtitleContainer {
     // Only setup if extension is enabled
     if (!this.videoElement || !this.isEnabled) return
 
-    // Remove existing container if it exists
+    // Hard de-dupe: remove any existing containers added by any frame/instance
+    document
+      .querySelectorAll(
+        ".custom-subtitle-container, .react-word-card-container, #bundai-subtitle-root, #bundai-wordcard-root"
+      )
+      .forEach((el) => el.remove())
     this.removeSubtitleContainer()
 
     // Create main subtitle container
+    // If a root already exists, bail to avoid duplicates
+    if (document.getElementById("bundai-subtitle-root")) {
+      return
+    }
+
     this.subtitleContainer = document.createElement("div")
+    this.subtitleContainer.id = "bundai-subtitle-root"
     this.subtitleContainer.className = "custom-subtitle-container"
     this.subtitleContainer.style.cssText = `
       position: fixed;
@@ -417,7 +428,12 @@ class CustomSubtitleContainer {
 
   private createReactWordCard(): void {
     // Create container for React WordCard
+    // Avoid duplicate wordcard root
+    if (document.getElementById("bundai-wordcard-root")) {
+      document.getElementById("bundai-wordcard-root")?.remove()
+    }
     this.wordCardContainer = document.createElement("div")
+    this.wordCardContainer.id = "bundai-wordcard-root"
     this.wordCardContainer.className = "react-word-card-container"
 
     // Append to body (not to subtitle container to avoid z-index issues)
@@ -1112,13 +1128,21 @@ const WordCardManager: React.FC<{
 let subtitleContainer: CustomSubtitleContainer | null = null
 
 // Wait for DOM to be ready
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initializeSubtitles)
-} else {
-  initializeSubtitles()
+// Initialize only once per top-level document
+if (window.top === window.self) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initializeSubtitles)
+  } else {
+    initializeSubtitles()
+  }
 }
 
 async function initializeSubtitles() {
+  // Avoid initializing multiple times on the same page
+  if ((window as any).__bundaiSubtitleInit) {
+    return
+  }
+  ;(window as any).__bundaiSubtitleInit = true
   // Clean up existing instance
   if (subtitleContainer) {
     subtitleContainer.destroy()
@@ -1150,7 +1174,10 @@ const urlObserver = new MutationObserver(() => {
     console.log("[Custom Subtitles] URL changed, reinitializing subtitles")
 
     // Delay to allow page to load
-    setTimeout(initializeSubtitles, 1000)
+    setTimeout(() => {
+      ;(window as any).__bundaiSubtitleInit = false
+      initializeSubtitles()
+    }, 1000)
   }
 })
 
