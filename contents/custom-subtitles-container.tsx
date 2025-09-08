@@ -1110,17 +1110,17 @@ const WordCardManager: React.FC<{
   onClose: () => void
 }> = ({ wordCard, containerRect, onClose }) => {
   return (
-    <ApolloProvider client={client}>
-      <WordCard
-        word={wordCard.word}
-        mouseX={wordCard.mouseX}
-        mouseY={wordCard.mouseY}
-        isVisible={wordCard.isVisible}
-        isSticky={wordCard.isSticky}
-        onClose={onClose}
-        containerRect={containerRect}
-      />
-    </ApolloProvider>
+    // <ApolloProvider client={client}>
+    <WordCard
+      word={wordCard.word}
+      mouseX={wordCard.mouseX}
+      mouseY={wordCard.mouseY}
+      isVisible={wordCard.isVisible}
+      isSticky={wordCard.isSticky}
+      onClose={onClose}
+      containerRect={containerRect}
+    />
+    // </ApolloProvider>
   )
 }
 

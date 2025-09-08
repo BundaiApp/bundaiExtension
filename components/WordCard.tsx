@@ -1,12 +1,10 @@
-import { useMutation } from "@apollo/client"
+// components/WordCard.tsx
 import React, { useEffect, useRef, useState } from "react"
 import { toRomaji } from "wanakana"
 
-import "../style.css"
+import { useFlashcardService } from "../hooks/useFlashcardService"
 
-import client from "../graphql"
-import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
-import { storage, storageReady } from "../utils/secure-storage"
+import "../style.css"
 
 // Types
 interface JMDictEntry {
@@ -37,52 +35,62 @@ const WordCard: React.FC<WordCardProps> = ({
   containerRect
 }) => {
   const [entry, setEntry] = useState<JMDictEntry | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingEntry, setIsLoadingEntry] = useState(true)
   const [cardHeight, setCardHeight] = useState<number>(0)
   const cardRef = useRef<HTMLDivElement>(null)
-  const [addFlashCard] = useMutation(ADD_FLASH_CARD_MUTATION, { client })
 
-  const addCardManually = async () => {
-    if (!entry || isLoading || !word) return
-    await storageReady
-    const userId = await storage.get("userId")
-    if (!userId) {
-      console.log("No userId found in secure storage.")
-      return
-    }
+  // Use centralized flashcard service
+  const {
+    addFlashcard,
+    isLoading: isAddingFlashcard,
+    error,
+    success
+  } = useFlashcardService()
 
-    const kanjiName =
-      entry.kanji && entry.kanji.length > 0 ? entry.kanji[0] : word
-    const hiragana = entry.kana && entry.kana.length > 0 ? entry.kana[0] : word
-    const meanings = entry.senses
-      ? entry.senses.flatMap((s) => s.gloss).filter(Boolean)
-      : []
-    const quizAnswers = [...(entry.kana || []), ...(entry.kanji || [])].filter(
-      Boolean
-    )
+  const handleAddFlashcard = async () => {
+    if (!entry || isLoadingEntry || !word) return
 
     try {
-      const result = await addFlashCard({
-        variables: {
-          userId,
-          kanjiName,
-          hiragana,
-          meanings,
-          quizAnswers
-        }
+      const kanjiName =
+        entry.kanji && entry.kanji.length > 0 ? entry.kanji[0] : word
+      const hiragana =
+        entry.kana && entry.kana.length > 0 ? entry.kana[0] : word
+      const meanings = entry.senses
+        ? entry.senses.flatMap((s) => s.gloss).filter(Boolean)
+        : []
+      const quizAnswers = [
+        ...(entry.kana || []),
+        ...(entry.kanji || [])
+      ].filter(Boolean)
+
+      await addFlashcard({
+        kanjiName,
+        hiragana,
+        meanings,
+        quizAnswers
       })
-      console.log("Flashcard added:", result)
     } catch (err) {
-      console.error("Failed to add flashcard:", err)
+      console.error("Error in handleAddFlashcard:", err)
     }
   }
+
+  // Show success feedback temporarily
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => {
+        // You could reset success state here if the hook supports it
+        // or just let the user know the action was successful
+      }, 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [success])
 
   // Measure card height after render
   useEffect(() => {
     if (cardRef.current) {
       setCardHeight(cardRef.current.offsetHeight)
     }
-  }, [entry, isLoading, word])
+  }, [entry, isLoadingEntry, word])
 
   useEffect(() => {
     const loadEntry = async () => {
@@ -99,72 +107,32 @@ const WordCard: React.FC<WordCardProps> = ({
         foundEntry = window.jmdictKanaIndex?.[word]
       }
       setEntry(foundEntry || null)
-      setIsLoading(false)
+      setIsLoadingEntry(false)
     }
+
     if (word) {
-      setIsLoading(true)
+      setIsLoadingEntry(true)
       setEntry(null)
       loadEntry()
     } else {
-      setIsLoading(false)
+      setIsLoadingEntry(false)
       setEntry(null)
     }
   }, [word])
 
-  // If the card just became sticky, trigger the mutation
-  //   useEffect(() => {
-  //     if (isSticky && entry && !isLoading && word) {
-  //       ;(async () => {
-  //         await storageReady
-  //         const userId = await storage.get("userId")
-  //         if (!userId) {
-  //           console.log("No userId found in secure storage.")
-  //           return
-  //         }
-  //         // Extract data from entry
-  //         const kanjiName =
-  //           entry.kanji && entry.kanji.length > 0 ? entry.kanji[0] : word
-  //         const hiragana =
-  //           entry.kana && entry.kana.length > 0 ? entry.kana[0] : word
-  //         const meanings = entry.senses
-  //           ? entry.senses.flatMap((s) => s.gloss).filter(Boolean)
-  //           : []
-  //         const quizAnswers = [
-  //           ...(entry.kana || []),
-  //           ...(entry.kanji || [])
-  //         ].filter(Boolean)
-  //         try {
-  //           const result = await addFlashCard({
-  //             variables: {
-  //               userId,
-  //               kanjiName,
-  //               hiragana,
-  //               meanings,
-  //               quizAnswers
-  //             }
-  //           })
-  //           console.log("Flashcard added:", result)
-  //         } catch (err) {
-  //           console.error("Failed to add flashcard:", err)
-  //         }
-  //       })()
-  //     }
-  //   }, [isSticky, entry, isLoading, word, addFlashCard])
-
-  // Calculate position: above the subtitle container, x based on mouseX (clamped), y above mouseY
+  // Calculate position
   const cardWidth = 300
   const margin = 12
   let left = mouseX - cardWidth / 2
-  let top = containerRect.top - cardHeight - margin
+  let top = containerRect
+    ? containerRect.top - cardHeight - margin
+    : mouseY - cardHeight - margin
 
   if (containerRect) {
-    // Clamp horizontally to container bounds
     left = Math.max(
       containerRect.left,
       Math.min(left, containerRect.right - cardWidth)
     )
-
-    // Ensure card doesn't go above viewport
     top = Math.max(margin, top)
   }
 
@@ -180,7 +148,7 @@ const WordCard: React.FC<WordCardProps> = ({
     display: containerRect ? "block" : "none"
   }
 
-  // Compute romaji for the word (using kana reading if available)
+  // Compute romaji
   let romaji = ""
   try {
     if (
@@ -203,10 +171,13 @@ const WordCard: React.FC<WordCardProps> = ({
       <div className="bg-yellow-400 text-black rounded-lg p-4 shadow-lg min-w-[200px] max-w-[300px] text-lg leading-relaxed border-2 border-black relative">
         <div className="absolute top-2 right-2 flex space-x-2">
           <button
-            className="bg-none border-none text-black text-2xl cursor-pointer p-1 opacity-70 hover:opacity-100 transition-opacity"
-            onClick={addCardManually}
-            title="Add flashcard">
-            +
+            className={`bg-none border-none text-black text-2xl cursor-pointer p-1 transition-opacity ${
+              isAddingFlashcard ? "opacity-50" : "opacity-70 hover:opacity-100"
+            }`}
+            onClick={handleAddFlashcard}
+            disabled={isAddingFlashcard}
+            title={success ? "Added!" : "Add flashcard"}>
+            {isAddingFlashcard ? "..." : success ? "✓" : "+"}
           </button>
           <button
             className="bg-none border-none text-black text-2xl cursor-pointer p-1 opacity-70 hover:opacity-100 transition-opacity"
@@ -215,11 +186,27 @@ const WordCard: React.FC<WordCardProps> = ({
             ×
           </button>
         </div>
+
         <div className="text-2xl font-extrabold">{word}</div>
         {romaji && (
           <div className="text-lg opacity-50 font-bold mb-2">{romaji}</div>
         )}
-        {isLoading ? (
+
+        {/* Error display */}
+        {error && (
+          <div className="text-red-600 text-sm mb-2 bg-red-100 p-2 rounded">
+            {error}
+          </div>
+        )}
+
+        {/* Success display */}
+        {success && (
+          <div className="text-green-600 text-sm mb-2 bg-green-100 p-2 rounded">
+            Flashcard added successfully!
+          </div>
+        )}
+
+        {isLoadingEntry ? (
           <div className="text-lg opacity-70">Loading...</div>
         ) : entry ? (
           <>
