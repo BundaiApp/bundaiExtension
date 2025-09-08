@@ -44,8 +44,14 @@ const WordCard: React.FC<WordCardProps> = ({
     addFlashcard,
     isLoading: isAddingFlashcard,
     error,
-    success
+    success,
+    resetState
   } = useFlashcardService()
+
+  // Reset state when word changes
+  useEffect(() => {
+    resetState()
+  }, [word, resetState])
 
   const handleAddFlashcard = async () => {
     if (!entry || isLoadingEntry || !word) return
@@ -74,16 +80,15 @@ const WordCard: React.FC<WordCardProps> = ({
     }
   }
 
-  // Show success feedback temporarily
+  // Show success feedback temporarily and then reset
   useEffect(() => {
     if (success) {
       const timer = setTimeout(() => {
-        // You could reset success state here if the hook supports it
-        // or just let the user know the action was successful
-      }, 2000)
+        resetState()
+      }, 2000) // Reset after 2 seconds
       return () => clearTimeout(timer)
     }
-  }, [success])
+  }, [success, resetState])
 
   // Measure card height after render
   useEffect(() => {

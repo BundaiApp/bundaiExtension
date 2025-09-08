@@ -15,6 +15,7 @@ interface UseFlashcardServiceReturn {
   isLoading: boolean
   error: string | null
   success: boolean
+  resetState: () => void // Add this method to manually reset state
 }
 
 export const useFlashcardService = (): UseFlashcardServiceReturn => {
@@ -22,10 +23,15 @@ export const useFlashcardService = (): UseFlashcardServiceReturn => {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
+  const resetState = useCallback(() => {
+    setError(null)
+    setSuccess(false)
+  }, [])
+
   const addFlashcard = useCallback(async (data: FlashcardData) => {
     setIsLoading(true)
     setError(null)
-    setSuccess(false)
+    setSuccess(false) // Reset success at the start of each request
 
     try {
       await storageReady
@@ -145,6 +151,7 @@ export const useFlashcardService = (): UseFlashcardServiceReturn => {
     addFlashcard,
     isLoading,
     error,
-    success
+    success,
+    resetState
   }
 }
