@@ -11,7 +11,7 @@ function validateEmail(email: string) {
     );
 }
 
-function Register({ onRegister, onShowLogin }: { onRegister?: () => void, onShowLogin?: () => void }) {
+function Register({ onRegister, onShowLogin }: { onRegister?: (data?: any) => void, onShowLogin?: () => void }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [username, setUsername] = useState("")
@@ -50,13 +50,8 @@ function Register({ onRegister, onShowLogin }: { onRegister?: () => void, onShow
     try {
       const { data } = await signUp({ variables: { email, password, username } })
       if (data?.signUp?.errorMessage === null) {
-        const user = data.signUp.user
-        await storage.set("loggedIn", true)
-        await storage.set("token", data.signUp.token)
-        await storage.set("userId", user._id)
-        await storage.set("email", user.email)
-        await storage.set("username", user.name)
-        if (onRegister) onRegister()
+        // Don't set loggedIn=true immediately, pass data for verification
+        if (onRegister) onRegister(data.signUp)
       } else if (data?.signUp?.errorMessage) {
         setError(data.signUp.errorMessage)
       } else {
@@ -111,7 +106,7 @@ function Register({ onRegister, onShowLogin }: { onRegister?: () => void, onShow
           aria-label={showPassword ? "Hide password" : "Show password"}
         >
           {showPassword ? (
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664A9.956 9.956 0 0112 3c5.523 0 10 4.477 10 10 0 1.657-.403 3.221-1.125 4.575m-1.664 2.664A9.956 9.956 0 0112 21c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664L21 21" /></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664A9.956 9.956 0 0112 3c5.523 0 10 4.477 10 10 0 1.657-.403 3.221 1.125-4.575m-1.664 2.664A9.956 9.956 0 0112 21c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664L21 21" /></svg>
           ) : (
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0zm-9.197 4.197A9.956 9.956 0 0112 3c5.523 0 10 4.477 10 10 0-1.657-.403 3.221-1.125 4.575m-1.664 2.664A9.956 9.956 0 0112 21c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664L21 21" /></svg>
           )}

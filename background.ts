@@ -4,6 +4,8 @@ import { ADD_FLASH_CARD_MUTATION } from "./graphql/mutations/addFlashCard.mutati
 import { storage, storageReady } from "./utils/secure-storage"
 
 export {}
+const DROPLET_SERVER_ADDRESS = "http://209.97.145.18/graphql"
+const LOCAL_ADDRESS = "http://localhost:3000/graphql"
 console.log(
   "Live now; make now always the most precious time. Now will never come again."
 )
@@ -48,7 +50,8 @@ async function handleAddFlashCard(flashCardData) {
 
     // Create a new client instance with auth headers for this request
     const authenticatedClient = new ApolloClient({
-      uri: "http://209.97.145.18/graphql",
+      // uri: DROPLET_SERVER_ADDRESS,
+      uri: LOCAL_ADDRESS,
       cache: new InMemoryCache({
         dataIdFromObject: (o) => (o.id != null ? String(o.id) : undefined)
       }),
@@ -95,7 +98,7 @@ async function handleAddFlashCardDirect(flashCardData) {
     throw new Error("Authentication token not found")
   }
 
-  const response = await fetch("http://209.97.145.18/graphql", {
+  const response = await fetch(LOCAL_ADDRESS, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

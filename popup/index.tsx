@@ -13,6 +13,7 @@ import { SecureStorage } from "@plasmohq/storage/secure"
 import SubtitlesSection from "~components/SubtitlesSection"
 import client from "~graphql"
 import { useSubtitle } from "~hooks/useSubtitle"
+import Verification from "./verification"
 
 // Utility function to extract video ID from YouTube URLs
 function extractVideoId(url: string): string | null {
@@ -516,6 +517,8 @@ function IndexPopup() {
   const [secureReady, setSecureReady] = useState(false)
   const [secureStorage] = useState(() => new SecureStorage())
   const [showRegister, setShowRegister] = useState(false)
+  const [showVerification, setShowVerification] = useState(false)
+  const [verificationData, setVerificationData] = useState({ userId: '', email: '' })
 
   useEffect(() => {
     secureStorage
@@ -543,13 +546,54 @@ function IndexPopup() {
   const handleShowRegister = () => setShowRegister(true)
   const handleShowLogin = () => setShowRegister(false)
 
+  const handleRegisterSuccess = (data) => {
+    // Store verification data and show verification screen
+    setVerificationData({
+      userId: data.user._id,
+      email: data.user.email
+    })
+    setShowVerification(true)
+  }
+
+  const handleVerificationSuccess = () => {
+    setLoggedIn(true)
+    setShowVerification(false)
+    setShowRegister(false)
+  }
+
+  const handleBackFromVerification = () => {
+    setShowVerification(false)
+    setShowRegister(true)
+  }
+
   if (!secureReady || loggedIn === null) return null
 
   if (!loggedIn) {
+    if (showVerification) {
+      return (
+        <Verification
+          onVerified={handleVerificationSuccess}
+          onBack={handleBackFromVerification}
+          userEmail={verificationData.email}
+          userId={verificationData.userId}
+        />
+      )
+    }
+    
     if (showRegister) {
-      return <Register onRegister={handleLogin} onShowLogin={handleShowLogin} />
+      return (
+        <Register 
+          onRegister={handleRegisterSuccess}  // Updated to pass data
+          onShowLogin={handleShowLogin} 
+        />
+      )
     } else {
-      return <Login onLogin={handleLogin} onShowRegister={handleShowRegister} />
+      return (
+        <Login 
+          onLogin={handleLogin} 
+          onShowRegister={handleShowRegister} 
+        />
+      )
     }
   }
 
