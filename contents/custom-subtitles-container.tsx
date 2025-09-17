@@ -665,9 +665,9 @@ class CustomSubtitleContainer {
 
   private handleSubtitleMouseLeave(): void {
     // Optional: auto-resume on leave (uncomment if desired)
-    // if (this.videoElement && typeof this.videoElement.play === 'function') {
-    //   this.videoElement.play()
-    // }
+    if (this.videoElement && typeof this.videoElement.play === 'function') {
+      this.videoElement.play()
+    }
   }
 
   // Updated word hover handler (now includes mouseY)
