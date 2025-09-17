@@ -1,18 +1,13 @@
 // components/WordCard.tsx
 import React, { useEffect, useRef, useState } from "react"
 import { toRomaji } from "wanakana"
-
 import { useFlashcardService } from "../hooks/useFlashcardService"
-
 import "../style.css"
 
-// Types
 interface JMDictEntry {
   kanji?: string[]
   kana?: string[]
-  senses?: Array<{
-    gloss: string[]
-  }>
+  senses?: Array<{ gloss: string[] }>
 }
 
 interface WordCardProps {
@@ -39,7 +34,6 @@ const WordCard: React.FC<WordCardProps> = ({
   const [cardHeight, setCardHeight] = useState<number>(0)
   const cardRef = useRef<HTMLDivElement>(null)
 
-  // Use centralized flashcard service
   const {
     addFlashcard,
     isLoading: isAddingFlashcard,
@@ -48,49 +42,28 @@ const WordCard: React.FC<WordCardProps> = ({
     resetState
   } = useFlashcardService()
 
-  // Reset state when word changes
-  useEffect(() => {
-    resetState()
-  }, [word, resetState])
+  useEffect(() => resetState(), [word, resetState])
 
   const handleAddFlashcard = async () => {
     if (!entry || isLoadingEntry || !word) return
-
     try {
-      const kanjiName =
-        entry.kanji && entry.kanji.length > 0 ? entry.kanji[0] : word
-      const hiragana =
-        entry.kana && entry.kana.length > 0 ? entry.kana[0] : word
-      const meanings = entry.senses
-        ? entry.senses.flatMap((s) => s.gloss).filter(Boolean)
-        : []
-      const quizAnswers = [
-        ...(entry.kana || []),
-        ...(entry.kanji || [])
-      ].filter(Boolean)
-
-      await addFlashcard({
-        kanjiName,
-        hiragana,
-        meanings,
-        quizAnswers
-      })
+      const kanjiName = entry.kanji?.[0] || word
+      const hiragana = entry.kana?.[0] || word
+      const meanings = entry.senses?.flatMap((s) => s.gloss).filter(Boolean) || []
+      const quizAnswers = [...(entry.kana || []), ...(entry.kanji || [])].filter(Boolean)
+      await addFlashcard({ kanjiName, hiragana, meanings, quizAnswers })
     } catch (err) {
       console.error("Error in handleAddFlashcard:", err)
     }
   }
 
-  // Show success feedback temporarily and then reset
   useEffect(() => {
     if (success) {
-      const timer = setTimeout(() => {
-        resetState()
-      }, 2000) // Reset after 2 seconds
+      const timer = setTimeout(() => resetState(), 2000)
       return () => clearTimeout(timer)
     }
   }, [success, resetState])
 
-  // Measure card height after render
   useEffect(() => {
     if (cardRef.current) {
       setCardHeight(cardRef.current.offsetHeight)
@@ -107,10 +80,7 @@ const WordCard: React.FC<WordCardProps> = ({
           check()
         })
       }
-      let foundEntry = window.jmdictIndex?.[word]
-      if (!foundEntry) {
-        foundEntry = window.jmdictKanaIndex?.[word]
-      }
+      const foundEntry = window.jmdictIndex?.[word] || window.jmdictKanaIndex?.[word]
       setEntry(foundEntry || null)
       setIsLoadingEntry(false)
     }
@@ -125,9 +95,8 @@ const WordCard: React.FC<WordCardProps> = ({
     }
   }, [word])
 
-  // Calculate position
-  const cardWidth = 300
-  const margin = 12
+  const cardWidth = 380
+  const margin = 16
   let left = mouseX - cardWidth / 2
   let top = containerRect
     ? containerRect.top - cardHeight - margin
@@ -153,31 +122,22 @@ const WordCard: React.FC<WordCardProps> = ({
     display: containerRect ? "block" : "none"
   }
 
-  // Compute romaji
   let romaji = ""
   try {
-    if (
-      entry &&
-      Array.isArray(entry.kana) &&
-      typeof entry.kana[0] === "string" &&
-      entry.kana[0].length > 0
-    ) {
-      romaji = toRomaji(entry.kana[0])
-    } else if (typeof word === "string" && word.length > 0) {
-      romaji = toRomaji(word)
-    }
-  } catch (e) {
-    console.error("Romaji conversion error:", e)
+    romaji = entry?.kana?.[0] ? toRomaji(entry.kana[0]) : toRomaji(word)
+  } catch {
     romaji = ""
   }
 
   return (
     <div ref={cardRef} style={cardStyle}>
-      <div className="bg-yellow-400 text-black rounded-lg p-4 shadow-lg min-w-[200px] max-w-[300px] text-lg leading-relaxed border-2 border-black relative">
-        <div className="absolute top-2 right-2 flex space-x-2">
+      <div className="relative p-6 rounded-3xl min-w-[300px] max-w-[400px] border-2 border-yellow-700 shadow-2xl bg-gradient-to-br from-yellow-300 via-yellow-400 to-yellow-500 text-black transition-all duration-300">
+        <div className="absolute top-4 right-4 flex space-x-3">
           <button
-            className={`bg-none border-none text-black text-2xl cursor-pointer p-1 transition-opacity ${
-              isAddingFlashcard ? "opacity-50" : "opacity-70 hover:opacity-100"
+            className={`text-4xl font-bold p-2 rounded-full transition-all duration-200 ${
+              isAddingFlashcard
+                ? "opacity-50 cursor-not-allowed"
+                : "hover:bg-yellow-600 hover:text-white opacity-90"
             }`}
             onClick={handleAddFlashcard}
             disabled={isAddingFlashcard}
@@ -185,66 +145,73 @@ const WordCard: React.FC<WordCardProps> = ({
             {isAddingFlashcard ? "..." : success ? "✓" : "+"}
           </button>
           <button
-            className="bg-none border-none text-black text-2xl cursor-pointer p-1 opacity-70 hover:opacity-100 transition-opacity"
+            className="text-4xl font-bold p-2 rounded-full opacity-80 hover:bg-red-600 hover:text-white transition-all duration-200"
             onClick={onClose}
             title="Close">
             ×
           </button>
         </div>
 
-        <div className="text-2xl font-extrabold">{word}</div>
+        {/* Word Display */}
+        <div className="text-5xl font-extrabold tracking-tight mb-2 leading-tight">{word}</div>
+
+        {/* Romaji */}
         {romaji && (
-          <div className="text-lg opacity-50 font-bold mb-2">{romaji}</div>
+          <div className="text-2xl italic text-black/70 font-medium mb-4 tracking-wide">
+            {romaji}
+          </div>
         )}
 
-        {/* Error display */}
+        {/* Error Display */}
         {error && (
-          <div className="text-red-600 text-sm mb-2 bg-red-100 p-2 rounded">
+          <div className="text-red-900 text-lg mb-4 bg-red-100 border border-red-300 p-3 rounded shadow">
             {error}
           </div>
         )}
 
-        {/* Success display */}
+        {/* Success Display */}
         {success && (
-          <div className="text-green-600 text-sm mb-2 bg-green-100 p-2 rounded">
+          <div className="text-green-900 text-lg mb-4 bg-green-100 border border-green-300 p-3 rounded shadow">
             Flashcard added successfully!
           </div>
         )}
 
+        {/* Dictionary Content */}
         {isLoadingEntry ? (
-          <div className="text-lg opacity-70">Loading...</div>
+          <div className="text-2xl opacity-70">Loading...</div>
         ) : entry ? (
           <>
-            {entry.kanji && entry.kanji.length > 0 && (
-              <div className="my-2">
-                <span className="text-lg opacity-80 mr-2">Kanji: </span>
-                <div className="inline">
+            {/* Kanji */}
+            {entry.kanji?.length > 0 && (
+              <div className="my-5">
+                <div className="text-2xl font-semibold opacity-80 mb-2">Kanji:</div>
+                <div className="flex flex-wrap">
                   {entry.kanji
-                    .filter(
-                      (k) => typeof k === "string" && /[\u4E00-\u9FAF]/.test(k)
-                    )
+                    .filter(k => typeof k === "string" && /[\u4E00-\u9FAF]/.test(k))
                     .map((kanji, index) => (
                       <span
                         key={index}
-                        className="inline-block bg-black text-yellow-300 px-3 py-1 rounded-xl text-xl border border-yellow-600 mr-2 mb-2">
+                        className="inline-block bg-black text-yellow-300 px-5 py-2 rounded-2xl text-3xl font-bold border border-yellow-600 mr-3 mb-3 shadow-md hover:scale-105 hover:bg-yellow-900 transition-all duration-200">
                         {kanji}
                       </span>
                     ))}
                 </div>
               </div>
             )}
-            {entry.senses && entry.senses.length > 0 && (
-              <div className="my-2">
-                <div className="text-lg opacity-80 mb-1">Meanings:</div>
-                <div className="mt-1">
+
+            {/* Meanings */}
+            {entry.senses?.length > 0 && (
+              <div className="my-5">
+                <div className="text-2xl font-semibold opacity-80 mb-2">Meanings:</div>
+                <div className="flex flex-wrap">
                   {entry.senses
-                    .flatMap((sense) => sense.gloss)
+                    .flatMap(sense => sense.gloss)
                     .filter(Boolean)
                     .slice(0, 3)
                     .map((gloss, index) => (
                       <span
                         key={index}
-                        className="inline-block bg-black text-yellow-200 px-3 py-1 rounded-2xl text-lg border border-yellow-600 mr-2 mb-2">
+                        className="inline-block bg-yellow-200 text-black px-5 py-2 rounded-full text-xl font-semibold border border-yellow-500 mr-3 mb-3 shadow hover:bg-yellow-300 transition-colors duration-200">
                         {gloss}
                       </span>
                     ))}
@@ -253,7 +220,7 @@ const WordCard: React.FC<WordCardProps> = ({
             )}
           </>
         ) : (
-          <div className="text-lg opacity-70">No dictionary entry found</div>
+          <div className="text-2xl opacity-70">No dictionary entry found</div>
         )}
       </div>
     </div>
