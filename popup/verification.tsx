@@ -37,48 +37,78 @@ function Verification({
     }
   }, [resendCooldown])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setSuccess("")
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault()
+  setError("")
+  setSuccess("")
 
-    if (!passCode) {
-      setError("Please enter the verification code")
+  // Validation
+  if (!passCode || passCode.trim() === "") {
+    setError("Please enter the verification code")
+    return
+  }
+
+  if (passCode.length !== 6) {
+    setError("Verification code must be 6 digits")
+    return
+  }
+
+  // Validate that passCode contains only digits
+  if (!/^\d{6}$/.test(passCode)) {
+    setError("Verification code must contain only numbers")
+    return
+  }
+
+  if (!secureReady) {
+    setError("Secure storage not ready. Please wait.")
+    return
+  }
+
+  if (!userId || userId.trim() === "") {
+    setError("User ID not found. Please try signing up again.")
+    return
+  }
+
+  // Convert passCode to integer
+  const numericPassCode = parseInt(passCode, 10)
+
+  if (isNaN(numericPassCode)) {
+    setError("Invalid verification code format")
+    return
+  }
+
+  try {
+    const { data } = await verify({ 
+      variables: { 
+        passCode: numericPassCode, 
+        userId: userId.trim()
+      } 
+    })
+
+    // Check if we got a response at all
+    if (!data) {
+      setError("No response from server. Please try again.")
       return
     }
 
-    if (passCode.length !== 6) {
-      setError("Verification code must be 6 digits")
+    // Check if verify field exists
+    if (!data.verify) {
+      setError("Invalid server response. Please try again.")
       return
     }
 
-    if (!secureReady) {
-      setError("Secure storage not ready. Please wait.")
-      return
-    }
-
-    if (!userId) {
-      setError("User ID not found. Please try signing up again.")
-      return
-    }
-
-    try {
-      const { data,errors } = await verify({ 
-        variables: { 
-          passCode: passCode, 
-          userId 
-        } 
-      })
-console.log({errors})
-      if (data?.verify?.errorMessage === null) {
-        const user = data.verify.user
+    // Check for success case - modified logic
+    if (data.verify.errorMessage === null && data.verify.token && data.verify.user) {
+      const user = data.verify.user
+      
+      try {
         // Update user data in storage with verified status
         await storage.set("loggedIn", true)
         await storage.set("token", data.verify.token)
         await storage.set("userId", user._id)
         await storage.set("email", user.email)
         await storage.set("username", user.name)
-        await storage.set("isVerified", true)
+        await storage.set("isVerified", user.isVerified || true)
         
         setSuccess("Email verified successfully!")
         
@@ -87,15 +117,36 @@ console.log({errors})
           if (onVerified) onVerified()
         }, 1500)
         
-      } else if (data?.verify?.errorMessage) {
-        setError(data.verify.errorMessage)
-      } else {
-        setError("Verification failed. Please try again.")
+      } catch (storageError) {
+        console.error("Storage error:", storageError)
+        setError("Verification successful but failed to save data. Please try logging in.")
       }
-    } catch (err: any) {
-      setError(err.message || "Verification failed. Please try again.")
+      
+    } else if (data.verify.errorMessage) {
+      setError(data.verify.errorMessage)
+    } else {
+      setError("Verification failed. Please check your code and try again.")
+    }
+
+  } catch (err: any) {
+    console.error("Verification error:", err)
+    
+    // Handle specific error types
+    if (err.networkError) {
+      if (err.networkError.statusCode === 400) {
+        setError("Invalid request. Please check your verification code.")
+      } else if (err.networkError.statusCode === 500) {
+        setError("Server error. Please try again later.")
+      } else {
+        setError("Network error. Please check your connection and try again.")
+      }
+    } else if (err.graphQLErrors && err.graphQLErrors.length > 0) {
+      setError(err.graphQLErrors[0].message || "Server error occurred.")
+    } else {
+      setError("Verification failed. Please try again.")
     }
   }
+}
 
   const handleResend = async () => {
     if (!userId || resendCooldown > 0) return
@@ -105,7 +156,7 @@ console.log({errors})
 
     try {
       const { data } = await resendVerification({ 
-        variables: { userId } 
+        variables: { userId: userId.trim() } 
       })
 
       if (data?.resendVerification?.errorMessage === null) {
@@ -117,6 +168,7 @@ console.log({errors})
         setError("Failed to resend verification code.")
       }
     } catch (err: any) {
+      console.error("Resend error:", err)
       setError(err.message || "Failed to resend verification code.")
     }
   }
@@ -125,6 +177,8 @@ console.log({errors})
     const value = e.target.value.replace(/\D/g, '') // Only allow digits
     if (value.length <= 6) {
       setPassCode(value)
+      // Clear any existing errors when user starts typing
+      if (error) setError("")
     }
   }
 
@@ -166,27 +220,27 @@ console.log({errors})
           autoComplete="one-time-code"
         />
         <p className="text-xs text-black opacity-60 text-center">
-          Enter the 6-digit code from your email
+          Enter the 6-digit code from your email ({passCode.length}/6)
         </p>
       </div>
 
       {/* Error/Success Messages */}
       {error && (
-        <div className="bg-red-100 border border-red-400 p-2 rounded">
-          <p className="text-red-700 text-xs">{error}</p>
+        <div className="bg-red-100 border border-red-400 p-3 rounded">
+          <p className="text-red-700 text-sm font-medium">{error}</p>
         </div>
       )}
       
       {success && (
-        <div className="bg-green-100 border border-green-400 p-2 rounded">
-          <p className="text-green-700 text-xs">{success}</p>
+        <div className="bg-green-100 border border-green-400 p-3 rounded">
+          <p className="text-green-700 text-sm font-medium">{success}</p>
         </div>
       )}
 
       {/* Verify Button */}
       <button 
         type="submit" 
-        className="bg-black text-yellow-400 p-3 rounded font-bold text-lg disabled:bg-gray-600 disabled:cursor-not-allowed" 
+        className="bg-black text-yellow-400 p-3 rounded font-bold text-lg disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors" 
         disabled={verifyLoading || !secureReady || passCode.length !== 6}
       >
         {verifyLoading ? "Verifying..." : !secureReady ? "Loading..." : "Verify Email"}
@@ -200,7 +254,7 @@ console.log({errors})
         <button
           type="button"
           onClick={handleResend}
-          className="text-sm font-semibold text-black underline hover:text-yellow-800 disabled:text-gray-500 disabled:no-underline disabled:cursor-not-allowed"
+          className="text-sm font-semibold text-black underline hover:text-yellow-800 disabled:text-gray-500 disabled:no-underline disabled:cursor-not-allowed transition-colors"
           disabled={resendLoading || resendCooldown > 0 || !userId}
         >
           {resendLoading 
@@ -217,7 +271,7 @@ console.log({errors})
         <button
           type="button"
           onClick={onBack}
-          className="text-xs text-black opacity-70 hover:opacity-100 underline text-center mt-2"
+          className="text-xs text-black opacity-70 hover:opacity-100 underline text-center mt-2 transition-opacity"
         >
           ← Back to Registration
         </button>
