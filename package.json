@@ -34,10 +34,17 @@
   },
   "manifest": {
     "permissions": [
-      "storage"
+      "activeTab",
+      "storage",
+      "scripting",
+      "tabs",
+      "cookies"
     ],
     "host_permissions": [
-      "*://*.youtube.com/*"
+      "*://*.youtube.com/*",
+      "http://localhost:8000/*",
+      "http://localhost:3000/*",
+      "http://209.97.145.18/*"
     ],
     "web_accessible_resources": [
       {
