@@ -89,8 +89,15 @@ const WordCard: React.FC<WordCardProps> = ({
       adjacentGlosses.push(`Option ${adjacentGlosses.length + 1}`)
     }
 
-    // Return array with correct answer first, followed by 3 other glosses
-    return [correctAnswer, ...adjacentGlosses.slice(0, 3)]
+    // Shuffling the answers using fisher yates algorithm
+    const allAnswers = [correctAnswer, ...adjacentGlosses.slice(0, 3)]
+    for (let i = allAnswers.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [allAnswers[i], allAnswers[j]] = [allAnswers[j], allAnswers[i]]
+  }
+
+    // Return the shuffled array
+    return allAnswers
   }
   const handleAddFlashcard = async () => {
     if (!entry || isLoadingEntry || !word) return
