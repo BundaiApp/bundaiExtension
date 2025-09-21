@@ -49,6 +49,7 @@
     "web_accessible_resources": [
       {
         "resources": [
+          "tabs/*",
           "node_modules/kuromoji/dict/*.dat.gz",
           "assets/data/japanese/jmdict-simplified-flat-full.json"
         ],
