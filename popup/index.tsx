@@ -1,19 +1,10 @@
-// Modified index.tsx
+// Simplified popup index.tsx - only shows main functionality
 import { useEffect, useRef, useState } from "react"
-
-import Login from "./login"
-import Register from "./register"
-
 import "../style.css"
-
 import { ApolloProvider } from "@apollo/client"
-
 import { SecureStorage } from "@plasmohq/storage/secure"
-
 import SubtitlesSection from "~components/SubtitlesSection"
 import client from "~graphql"
-import { useSubtitle } from "~hooks/useSubtitle"
-import Verification from "./verification"
 
 // Utility function to extract video ID from YouTube URLs
 function extractVideoId(url: string): string | null {
@@ -34,7 +25,7 @@ function extractVideoId(url: string): string | null {
   return null
 }
 
-function MainPage({ onLogout }) {
+function MainPage({ onOpenTabs }) {
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
   const [secureReady, setSecureReady] = useState(false)
@@ -49,14 +40,11 @@ function MainPage({ onLogout }) {
   const [isFetchingSubtitles, setIsFetchingSubtitles] = useState(false)
   const inFlightRequestsRef = useRef<Set<string>>(new Set())
 
-  const DROPLET_BASE_URL = "http://209.97.145.18"
-
-  // Don't use useSubtitle hook - we'll manage subtitle fetching manually
+  const DROPLET_BASE_URL = "https://api.bundai.app"
 
   // Function to get current tab URL and extract video ID
   const getCurrentVideoId = async () => {
     try {
-      // Get the current active tab
       const [tab] = await chrome.tabs.query({
         active: true,
         currentWindow: true
@@ -66,10 +54,8 @@ function MainPage({ onLogout }) {
         setCurrentUrl(tab.url)
         const videoId = extractVideoId(tab.url)
 
-        // Only update video ID if it actually changed
         if (videoId !== currentVideoId) {
           setCurrentVideoId(videoId)
-          // Load cached subtitles for this video if available
           loadCachedSubtitles(videoId)
         }
 
@@ -101,7 +87,6 @@ function MainPage({ onLogout }) {
         setSubtitleError(null)
         console.log("Loaded cached subtitles for video:", videoId)
       } else {
-        // Cache expired or doesn't exist
         setCachedSubtitles(null)
         console.log("No valid cached subtitles for video:", videoId)
       }
@@ -115,7 +100,6 @@ function MainPage({ onLogout }) {
   const fetchAndCacheSubtitles = async (videoId: string) => {
     if (!videoId) return
 
-    // Single-flight guard per videoId
     if (inFlightRequestsRef.current.has(videoId)) {
       console.log("[MainPage] fetch already in flight for", videoId)
       return
@@ -146,7 +130,7 @@ function MainPage({ onLogout }) {
 
       const raw = await res.json()
       const rawSubs = raw?.subtitles ?? raw ?? {}
-      // Choose best single URL per language: prefer VTT and the last entry
+      
       const subtitles: Record<string, string[]> = Object.fromEntries(
         Object.entries(rawSubs).map(([lang, entries]) => {
           try {
@@ -190,17 +174,15 @@ function MainPage({ onLogout }) {
         })
       )
 
-      // Cache the result (best-effort). Large payloads can exceed quotas and crash the popup.
       setCachedSubtitles(subtitles)
       try {
         const serialized = JSON.stringify(subtitles)
-        // Rough size check (~bytes). Skip persistent cache if too large (>3MB)
         if (serialized.length < 3 * 1024 * 1024) {
           const cacheKey = `subtitles_cache_${videoId}`
           const cacheData = {
             data: subtitles,
             timestamp: Date.now(),
-            expiry: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+            expiry: Date.now() + 24 * 60 * 60 * 1000
           }
           await chrome.storage.local.set({ [cacheKey]: cacheData })
         } else {
@@ -225,7 +207,6 @@ function MainPage({ onLogout }) {
     }
   }
 
-  // Collect YouTube cookies and return a Cookie header string
   const getYouTubeCookieHeader = async (): Promise<string> => {
     try {
       console.log("[MainPage] collecting YouTube cookies")
@@ -244,7 +225,6 @@ function MainPage({ onLogout }) {
     }
   }
 
-  // Send message to content script to update extension state
   const notifyContentScript = async (enabled: boolean) => {
     try {
       const [tab] = await chrome.tabs.query({
@@ -310,59 +290,12 @@ function MainPage({ onLogout }) {
     initializeVideoData()
   }, [])
 
-  // Mount/unmount and visibility debugging
-  useEffect(() => {
-    console.log("[MainPage] mounted")
-    const onError = (event) => {
-      console.error("[MainPage] window error:", event?.error || event?.message)
-    }
-    const onRejection = (event) => {
-      console.error("[MainPage] unhandledrejection:", event?.reason)
-    }
-    const onVisibility = () =>
-      console.log("[MainPage] visibilitychange", document.visibilityState)
-    const onPageHide = () => console.log("[MainPage] pagehide - popup closing")
-    window.addEventListener("error", onError)
-    window.addEventListener("unhandledrejection", onRejection)
-    document.addEventListener("visibilitychange", onVisibility)
-    window.addEventListener("pagehide", onPageHide)
-    return () => {
-      window.removeEventListener("error", onError)
-      window.removeEventListener("unhandledrejection", onRejection)
-      document.removeEventListener("visibilitychange", onVisibility)
-      window.removeEventListener("pagehide", onPageHide)
-      console.log("[MainPage] unmounted")
-    }
-  }, [])
-
-  // Key state changes
-  useEffect(() => {
-    console.log("[MainPage] state", {
-      enabled,
-      loading,
-      secureReady,
-      currentUrl,
-      currentVideoId,
-      isFetchingSubtitles
-    })
-  }, [
-    enabled,
-    loading,
-    secureReady,
-    currentUrl,
-    currentVideoId,
-    isFetchingSubtitles
-  ])
-
   const handleToggle = async (e) => {
     const newValue = e.target.checked
     console.log("[MainPage] toggle clicked ->", newValue)
     setEnabled(newValue)
 
-    // Save to storage
     await secureStorage.set("extensionEnabled", newValue)
-
-    // Notify content script immediately
     await notifyContentScript(newValue)
   }
 
@@ -373,7 +306,6 @@ function MainPage({ onLogout }) {
     }
   }
 
-  // Function to fetch subtitles when user needs them
   const handleFetchSubtitles = async () => {
     if (!currentVideoId) return
     console.log("[MainPage] fetch subtitles for", currentVideoId)
@@ -503,22 +435,52 @@ function MainPage({ onLogout }) {
       )}
 
       <button
-        onClick={onLogout}
+        onClick={onOpenTabs}
         className="bg-black text-yellow-400 p-2 rounded font-bold mt-2">
-        Logout
+        Manage Account
       </button>
     </div>
   )
 }
 
-// Rest of the component remains the same...
+function NotLoggedInPopup({ onOpenTabs }) {
+  return (
+    <div className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
+      <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
+        <h1 className="text-xl font-extrabold text-black">Bundai</h1>
+        <h2 className="text-xs text-black opacity-80">
+          A Japanese learning browser extension
+        </h2>
+      </div>
+
+      <div className="bg-white bg-opacity-30 p-3 rounded border border-black border-opacity-20">
+        <h3 className="font-semibold text-black mb-2">Welcome!</h3>
+        <p className="text-sm text-black opacity-80 mb-3">
+          Please log in or create an account to use Bundai extension features.
+        </p>
+        <button
+          onClick={onOpenTabs}
+          className="w-full bg-black text-yellow-400 p-2 rounded font-bold hover:bg-gray-800 transition-colors">
+          Login / Register
+        </button>
+      </div>
+
+      <div className="text-xs text-black opacity-60">
+        <p className="font-semibold mb-1">Features available after login:</p>
+        <ul className="space-y-1">
+          <li>• Japanese subtitle extraction</li>
+          <li>• Vocabulary learning tools</li>
+          <li>• Progress tracking</li>
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 function IndexPopup() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [secureReady, setSecureReady] = useState(false)
   const [secureStorage] = useState(() => new SecureStorage())
-  const [showRegister, setShowRegister] = useState(false)
-  const [showVerification, setShowVerification] = useState(false)
-  const [verificationData, setVerificationData] = useState({ userId: '', email: '' })
 
   useEffect(() => {
     secureStorage
@@ -533,71 +495,19 @@ function IndexPopup() {
     })
   }, [secureReady, secureStorage])
 
-  const handleLogin = () => {
-    setLoggedIn(true)
-    setShowRegister(false)
-  }
-
-  const handleLogout = async () => {
-    await secureStorage.set("loggedIn", false)
-    setLoggedIn(false)
-  }
-
-  const handleShowRegister = () => setShowRegister(true)
-  const handleShowLogin = () => setShowRegister(false)
-
-  const handleRegisterSuccess = (data) => {
-    // Store verification data and show verification screen
-    setVerificationData({
-      userId: data.user._id,
-      email: data.user.email
+  const handleOpenTabs = () => {
+    chrome.tabs.create({ 
+      url: chrome.runtime.getURL('tabs/auth.html')
     })
-    setShowVerification(true)
-  }
-
-  const handleVerificationSuccess = () => {
-    setLoggedIn(true)
-    setShowVerification(false)
-    setShowRegister(false)
-  }
-
-  const handleBackFromVerification = () => {
-    setShowVerification(false)
-    setShowRegister(true)
   }
 
   if (!secureReady || loggedIn === null) return null
 
-  if (!loggedIn) {
-    if (showVerification) {
-      return (
-        <Verification
-          onVerified={handleVerificationSuccess}
-          onBack={handleBackFromVerification}
-          userEmail={verificationData.email}
-          userId={verificationData.userId}
-        />
-      )
-    }
-    
-    if (showRegister) {
-      return (
-        <Register 
-          onRegister={handleRegisterSuccess}  // Updated to pass data
-          onShowLogin={handleShowLogin} 
-        />
-      )
-    } else {
-      return (
-        <Login 
-          onLogin={handleLogin} 
-          onShowRegister={handleShowRegister} 
-        />
-      )
-    }
+  if (loggedIn) {
+    return <MainPage onOpenTabs={handleOpenTabs} />
+  } else {
+    return <NotLoggedInPopup onOpenTabs={handleOpenTabs} />
   }
-
-  return <MainPage onLogout={handleLogout} />
 }
 
 const MainApp = () => (

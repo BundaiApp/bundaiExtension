@@ -44,8 +44,11 @@
       "*://*.youtube.com/*",
       "http://localhost:8000/*",
       "http://localhost:3000/*",
-      "http://209.97.145.18/*"
+      "https://api.bundai.app/*"
     ],
+    "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
     "web_accessible_resources": [
       {
         "resources": [
