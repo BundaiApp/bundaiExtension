@@ -258,7 +258,7 @@ function MainPage({ onOpenTabs }) {
   // Initialize secure storage
   useEffect(() => {
     console.log("[MainPage] initializing secure storage")
-    secureStorage.setPassword("bundai-secure-key").then(() => {
+    secureStorage.setPassword(process.env.PLASMO_SECURE_STORAGE_PASSWORD).then(() => {
       console.log("[MainPage] secure storage ready")
       setSecureReady(true)
     })
@@ -484,7 +484,7 @@ function IndexPopup() {
 
   useEffect(() => {
     secureStorage
-      .setPassword("bundai-secure-key")
+      .setPassword(process.env.PLASMO_SECURE_STORAGE_PASSWORD)
       .then(() => setSecureReady(true))
   }, [secureStorage])
 

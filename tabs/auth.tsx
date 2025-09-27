@@ -19,7 +19,7 @@ function AuthPage() {
 
   useEffect(() => {
     secureStorage
-      .setPassword("bundai-secure-key")
+      .setPassword(process.env.PLASMO_SECURE_STORAGE_PASSWORD)
       .then(() => setSecureReady(true))
   }, [secureStorage])
 

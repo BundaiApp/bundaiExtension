@@ -50,8 +50,8 @@ async function handleAddFlashCard(flashCardData) {
 
     // Create a new client instance with auth headers for this request
     const authenticatedClient = new ApolloClient({
-      // uri: DROPLET_SERVER_ADDRESS,
-      uri: LOCAL_ADDRESS,
+      uri: DROPLET_SERVER_ADDRESS,
+      // uri: LOCAL_ADDRESS,
       cache: new InMemoryCache({
         dataIdFromObject: (o) => (o.id != null ? String(o.id) : undefined)
       }),
@@ -98,7 +98,7 @@ async function handleAddFlashCardDirect(flashCardData) {
     throw new Error("Authentication token not found")
   }
 
-  const response = await fetch(LOCAL_ADDRESS, {
+  const response = await fetch(DROPLET_SERVER_ADDRESS, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
