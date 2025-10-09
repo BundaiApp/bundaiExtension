@@ -11,7 +11,7 @@ function validateEmail(email: string) {
     );
 }
 
-function Login({ onLogin, onShowRegister }: { onLogin?: () => void, onShowRegister?: () => void }) {
+function Login({ onLogin, onShowRegister, onShowForgotPassword }: { onLogin?: () => void, onShowRegister?: () => void, onShowForgotPassword?: () => void }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
@@ -106,6 +106,11 @@ function Login({ onLogin, onShowRegister }: { onLogin?: () => void, onShowRegist
       <button type="submit" className="bg-black text-yellow-400 p-2 rounded font-bold" disabled={loading || !secureReady}>
         {loading ? "Logging in..." : !secureReady ? "Secure storage..." : "Login"}
       </button>
+      <div className="text-xs text-center mt-2">
+        <button type="button" className="underline text-black hover:text-yellow-700" onClick={onShowForgotPassword}>
+          Forgot password?
+        </button>
+      </div>
       <div className="text-xs text-center mt-2">
         Don't have an account?{' '}
         <button type="button" className="underline text-black hover:text-yellow-700" onClick={onShowRegister}>

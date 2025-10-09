@@ -7,6 +7,7 @@ import PageLayout from '~components/PageLayout'
 import Login from '../popup/login'
 import Register from '../popup/register'
 import Verification from '../popup/verification'
+import ForgotPassword from '../popup/forgotPassword'
 
 function AuthPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
@@ -14,6 +15,7 @@ function AuthPage() {
   const [secureStorage] = useState(() => new SecureStorage())
   const [showRegister, setShowRegister] = useState(false)
   const [showVerification, setShowVerification] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
   const [verificationData, setVerificationData] = useState({ userId: '', email: '' })
   const [userInfo, setUserInfo] = useState({ username: '', email: '' })
 
@@ -62,8 +64,21 @@ function AuthPage() {
     setUserInfo({ username: '', email: '' })
   }
 
-  const handleShowRegister = () => setShowRegister(true)
-  const handleShowLogin = () => setShowRegister(false)
+  const handleShowRegister = () => {
+    setShowRegister(true)
+    setShowForgotPassword(false)
+  }
+  const handleShowLogin = () => {
+    setShowRegister(false)
+    setShowForgotPassword(false)
+  }
+  const handleShowForgotPassword = () => {
+    setShowForgotPassword(true)
+    setShowRegister(false)
+  }
+  const handleForgotPasswordSuccess = () => {
+    setShowForgotPassword(false)
+  }
 
   const handleRegisterSuccess = (data) => {
     setVerificationData({
@@ -216,6 +231,19 @@ function AuthPage() {
     )
   }
 
+  if (showForgotPassword) {
+    return (
+      <PageLayout>
+        <div className="min-h-screen bg-yellow-400 flex items-center justify-center p-8">
+          <ForgotPassword 
+            onBack={handleShowLogin}
+            onSuccess={handleForgotPasswordSuccess}
+          />
+        </div>
+      </PageLayout>
+    )
+  }
+
   if (showRegister) {
     return (
       <PageLayout>
@@ -234,7 +262,8 @@ function AuthPage() {
       <div className="min-h-screen bg-yellow-400 flex items-center justify-center p-8">
         <Login 
           onLogin={handleLogin} 
-          onShowRegister={handleShowRegister} 
+          onShowRegister={handleShowRegister}
+          onShowForgotPassword={handleShowForgotPassword}
         />
       </div>
     </PageLayout>
