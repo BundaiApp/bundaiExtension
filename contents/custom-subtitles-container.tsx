@@ -136,13 +136,17 @@ class CustomSubtitleContainer {
   private async requestInitialState(): Promise<void> {
     console.log("[Custom Subtitles] Requesting initial state from background...")
     
+    // Only wait for page load if page is still loading
     if (document.readyState !== 'complete') {
       await new Promise(resolve => {
         window.addEventListener('load', resolve, { once: true })
       })
+      // Only add delay on initial page load, not on navigation
+      await new Promise(resolve => setTimeout(resolve, 1500))
+    } else {
+      // Page already loaded (navigation), request state immediately
+      await new Promise(resolve => setTimeout(resolve, 100))
     }
-    
-    await new Promise(resolve => setTimeout(resolve, 1500))
     
     await this.requestStateWithRetry()
   }
@@ -1090,10 +1094,17 @@ const urlObserver = new MutationObserver(() => {
     currentUrl = location.href
     console.log("[Custom Subtitles] URL changed, reinitializing subtitles")
 
+    // Cleanup existing instance before reinitializing
+    if (subtitleContainer) {
+      subtitleContainer.destroy()
+      subtitleContainer = null
+    }
+
+    // Shorter delay for navigation - state should be already available
     setTimeout(() => {
       (window as any).__bundaiSubtitleInit = false
       initializeSubtitles()
-    }, 1000)
+    }, 500)
   }
 })
 
