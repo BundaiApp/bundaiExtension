@@ -408,6 +408,9 @@ class CustomSubtitleContainer {
     this.startSubtitleUpdates()
 
     console.log("[Custom Subtitles] Subtitle container created and positioned")
+
+    // ✅ AUTO-LOAD: Load saved subtitle selections automatically
+    this.loadSavedSubtitles()
   }
 
   public setEnabled(enabled: boolean): void {
@@ -902,12 +905,15 @@ class CustomSubtitleContainer {
         }
 
         if (message.action === "setExtensionEnabled") {
+          console.log("[Custom Subtitles] Received setExtensionEnabled:", message.enabled)
           this.setEnabled(message.enabled)
           sendResponse({ success: true })
+          return true
         }
 
         if (message.action === "getExtensionState") {
           sendResponse({ enabled: this.isEnabled })
+          return true
         }
       })
     }
@@ -965,49 +971,46 @@ class CustomSubtitleContainer {
   }
 
   public async loadSavedSubtitles(): Promise<void> {
-    if (!this.isEnabled) return
+    if (!this.isEnabled) {
+      console.log("[Custom Subtitles] loadSavedSubtitles: Not enabled, skipping")
+      return
+    }
 
     try {
       const videoId = this.extractVideoId(window.location.href)
-      if (!videoId) return
+      if (!videoId) {
+        console.log("[Custom Subtitles] loadSavedSubtitles: No video ID found")
+        return
+      }
 
-      const result = await chrome.storage.local.get([`subtitles_${videoId}`])
-      const savedSubtitles = result[`subtitles_${videoId}`]
+      // Use the same keys as SubtitlesSection component
+      const result = await chrome.storage.local.get([
+        `subtitle1_${videoId}`,
+        `subtitle2_${videoId}`
+      ])
+      
+      const subtitle1Url = result[`subtitle1_${videoId}`]
+      const subtitle2Url = result[`subtitle2_${videoId}`]
 
-      if (savedSubtitles) {
-        if (savedSubtitles.subtitle1Url) {
-          await this.loadSubtitleFromUrl(savedSubtitles.subtitle1Url, 1)
+      console.log("[Custom Subtitles] Saved subtitle URLs:", { subtitle1Url, subtitle2Url })
+
+      if (subtitle1Url || subtitle2Url) {
+        if (subtitle1Url) {
+          await this.loadSubtitleFromUrl(subtitle1Url, 1)
+          console.log("[Custom Subtitles] Auto-loaded subtitle 1")
         }
-        if (savedSubtitles.subtitle2Url) {
-          await this.loadSubtitleFromUrl(savedSubtitles.subtitle2Url, 2)
+        if (subtitle2Url) {
+          await this.loadSubtitleFromUrl(subtitle2Url, 2)
+          console.log("[Custom Subtitles] Auto-loaded subtitle 2")
         }
-        console.log("[Custom Subtitles] Loaded saved subtitle selections")
+      } else {
+        console.log("[Custom Subtitles] No saved subtitles found for this video")
       }
     } catch (error) {
       console.error("[Custom Subtitles] Failed to load saved subtitles:", error)
     }
   }
 
-  public async saveSubtitleSelections(): Promise<void> {
-    try {
-      const videoId = this.extractVideoId(window.location.href)
-      if (!videoId) return
-
-      const subtitleData = {
-        subtitle1Url: this.subtitle1Url,
-        subtitle2Url: this.subtitle2Url,
-        timestamp: Date.now()
-      }
-
-      await chrome.storage.local.set({
-        [`subtitles_${videoId}`]: subtitleData
-      })
-
-      console.log("[Custom Subtitles] Saved subtitle selections for video:", videoId)
-    } catch (error) {
-      console.error("[Custom Subtitles] Failed to save subtitle selections:", error)
-    }
-  }
 
   private extractVideoId(url: string): string | null {
     if (!url) return null
@@ -1077,16 +1080,6 @@ async function initializeSubtitles() {
   console.log("[Custom Subtitles] Subtitle system initialized")
 }
 
-if (typeof chrome !== "undefined" && chrome.runtime) {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === "extensionToggled") {
-      if (subtitleContainer) {
-        subtitleContainer.setEnabled(message.enabled)
-      }
-      sendResponse({ success: true })
-    }
-  })
-}
 
 let currentUrl = location.href
 const urlObserver = new MutationObserver(() => {
