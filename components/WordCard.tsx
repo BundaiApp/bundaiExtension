@@ -192,21 +192,17 @@ const WordCard: React.FC<WordCardProps> = ({
 
   return (
     <div ref={cardRef} style={cardStyle}>
-      <div className="relative p-6 rounded-3xl min-w-[300px] max-w-[400px] border-2 border-yellow-700 shadow-2xl bg-gradient-to-br from-yellow-300 via-yellow-400 to-yellow-500 text-black transition-all duration-300">
-        <div className="absolute top-4 right-4 flex space-x-3">
+      <div className="wordcard-container">
+        <div className="wordcard-buttons">
           <button
-            className={`text-4xl font-bold p-2 rounded-full transition-all duration-200 ${
-              isAddingFlashcard
-                ? "opacity-50 cursor-not-allowed"
-                : "hover:bg-yellow-600 hover:text-white opacity-90"
-            }`}
+            className={`wordcard-button ${isAddingFlashcard ? "wordcard-button-disabled" : ""}`}
             onClick={handleAddFlashcard}
             disabled={isAddingFlashcard}
             title={success ? "Added!" : "Add flashcard"}>
             {isAddingFlashcard ? "..." : success ? "✓" : "+"}
           </button>
           <button
-            className="text-4xl font-bold p-2 rounded-full opacity-80 hover:bg-red-600 hover:text-white transition-all duration-200"
+            className="wordcard-button wordcard-button-close"
             onClick={onClose}
             title="Close">
             ×
@@ -214,51 +210,49 @@ const WordCard: React.FC<WordCardProps> = ({
         </div>
 
         {/* Word Display */}
-        <div className="text-5xl font-extrabold tracking-tight mb-2 leading-tight">
+        <div className="wordcard-word">
           {word}
         </div>
 
         {/* Romaji */}
         {romaji && (
-          <div className="text-2xl italic text-black/70 font-medium mb-4 tracking-wide">
+          <div className="wordcard-romaji">
             {romaji}
           </div>
         )}
 
         {/* Error Display */}
         {error && (
-          <div className="text-red-900 text-lg mb-4 bg-red-100 border border-red-300 p-3 rounded shadow">
+          <div className="wordcard-error">
             {error}
           </div>
         )}
 
         {/* Success Display */}
         {success && (
-          <div className="text-green-900 text-lg mb-4 bg-green-100 border border-green-300 p-3 rounded shadow">
+          <div className="wordcard-success">
             Flashcard added successfully!
           </div>
         )}
 
         {/* Dictionary Content */}
         {isLoadingEntry ? (
-          <div className="text-2xl opacity-70">Loading...</div>
+          <div className="wordcard-loading">Loading...</div>
         ) : entry ? (
           <>
             {/* Kanji */}
             {entry.kanji?.length > 0 && (
-              <div className="my-5">
-                <div className="text-2xl font-semibold opacity-80 mb-2">
+              <div className="wordcard-section">
+                <div className="wordcard-section-title">
                   Kanji:
                 </div>
-                <div className="flex flex-wrap">
+                <div className="wordcard-tags">
                   {entry.kanji
                     .filter(
                       (k) => typeof k === "string" && /[\u4E00-\u9FAF]/.test(k)
                     )
                     .map((kanji, index) => (
-                      <span
-                        key={index}
-                        className="inline-block bg-black text-yellow-300 px-5 py-2 rounded-2xl text-3xl font-bold border border-yellow-600 mr-3 mb-3 shadow-md hover:scale-105 hover:bg-yellow-900 transition-all duration-200">
+                      <span key={index} className="wordcard-kanji-tag">
                         {kanji}
                       </span>
                     ))}
@@ -268,19 +262,17 @@ const WordCard: React.FC<WordCardProps> = ({
 
             {/* Meanings */}
             {entry.senses?.length > 0 && (
-              <div className="my-5">
-                <div className="text-2xl font-semibold opacity-80 mb-2">
+              <div className="wordcard-section">
+                <div className="wordcard-section-title">
                   Meanings:
                 </div>
-                <div className="flex flex-wrap">
+                <div className="wordcard-tags">
                   {entry.senses
                     .flatMap((sense) => sense.gloss)
                     .filter(Boolean)
                     .slice(0, 3)
                     .map((gloss, index) => (
-                      <span
-                        key={index}
-                        className="inline-block bg-yellow-200 text-black px-5 py-2 rounded-full text-xl font-semibold border border-yellow-500 mr-3 mb-3 shadow hover:bg-yellow-300 transition-colors duration-200">
+                      <span key={index} className="wordcard-meaning-tag">
                         {gloss}
                       </span>
                     ))}
@@ -289,7 +281,7 @@ const WordCard: React.FC<WordCardProps> = ({
             )}
           </>
         ) : (
-          <div className="text-2xl opacity-70">No dictionary entry found</div>
+          <div className="wordcard-not-found">No dictionary entry found</div>
         )}
       </div>
     </div>

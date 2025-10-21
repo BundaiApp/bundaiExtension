@@ -1,8 +1,4 @@
-@tailwind components;
-@tailwind utilities;
-
-
-/* YouTube-Safe Subtitle CSS - Use this in your style.css */
+/* YouTube-Safe Subtitle CSS */
 
 /* Reset and isolate our components */
 .bundai-custom-subtitle-container,
@@ -166,4 +162,159 @@ ytd-app .bundai-custom-subtitle-container,
   -webkit-font-smoothing: antialiased !important;
   -moz-osx-font-smoothing: grayscale !important;
   text-rendering: optimizeLegibility !important;
+}
+
+/* WordCard Styling - Plain CSS */
+.wordcard-container {
+  position: relative;
+  padding: 24px;
+  border-radius: 24px;
+  min-width: 300px;
+  max-width: 400px;
+  border: 2px solid #a16207;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  background: linear-gradient(to bottom right, #fde047, #facc15, #eab308);
+  color: #000;
+  transition: all 0.3s;
+}
+
+.wordcard-buttons {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 12px;
+}
+
+.wordcard-button {
+  font-size: 32px;
+  font-weight: bold;
+  padding: 8px;
+  border-radius: 9999px;
+  opacity: 0.9;
+  transition: all 0.2s;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+}
+
+.wordcard-button:hover {
+  background-color: #ca8a04;
+  color: white;
+}
+
+.wordcard-button-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wordcard-button-close:hover {
+  background-color: #dc2626;
+  color: white;
+}
+
+.wordcard-word {
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  margin-bottom: 8px;
+  line-height: 1.1;
+}
+
+.wordcard-romaji {
+  font-size: 24px;
+  font-style: italic;
+  color: rgba(0, 0, 0, 0.7);
+  font-weight: 500;
+  margin-bottom: 16px;
+  letter-spacing: 0.025em;
+}
+
+.wordcard-error {
+  color: #7f1d1d;
+  font-size: 18px;
+  margin-bottom: 16px;
+  background-color: #fee2e2;
+  border: 1px solid #fca5a5;
+  padding: 12px;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.wordcard-success {
+  color: #14532d;
+  font-size: 18px;
+  margin-bottom: 16px;
+  background-color: #dcfce7;
+  border: 1px solid #86efac;
+  padding: 12px;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.wordcard-loading {
+  font-size: 24px;
+  opacity: 0.7;
+}
+
+.wordcard-section {
+  margin: 20px 0;
+}
+
+.wordcard-section-title {
+  font-size: 24px;
+  font-weight: 600;
+  opacity: 0.8;
+  margin-bottom: 8px;
+}
+
+.wordcard-tags {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.wordcard-kanji-tag {
+  display: inline-block;
+  background-color: #000;
+  color: #fde047;
+  padding: 8px 20px;
+  border-radius: 16px;
+  font-size: 24px;
+  font-weight: bold;
+  border: 1px solid #ca8a04;
+  margin-right: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s;
+  cursor: default;
+}
+
+.wordcard-kanji-tag:hover {
+  transform: scale(1.05);
+  background-color: #78350f;
+}
+
+.wordcard-meaning-tag {
+  display: inline-block;
+  background-color: #fef08a;
+  color: #000;
+  padding: 8px 20px;
+  border-radius: 9999px;
+  font-size: 18px;
+  font-weight: 600;
+  border: 1px solid #eab308;
+  margin-right: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  transition: background-color 0.2s;
+  cursor: default;
+}
+
+.wordcard-meaning-tag:hover {
+  background-color: #fde047;
+}
+
+.wordcard-not-found {
+  font-size: 24px;
+  opacity: 0.7;
 }
