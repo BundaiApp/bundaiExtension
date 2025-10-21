@@ -14,5 +14,8 @@ module.exports = {
   theme: {
     extend: {}
   },
+  corePlugins: {
+    preflight: false  // Disable Preflight to avoid conflicts with YouTube
+  },
   plugins: []
 }
