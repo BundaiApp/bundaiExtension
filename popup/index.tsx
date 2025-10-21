@@ -400,16 +400,16 @@ function MainPage({ onOpenTabs }) {
       {/* Extension Enable/Disable Toggle */}
       <div className="flex items-center gap-3">
         <span className="text-black font-medium opacity-80">Disabled</span>
-        <label className="relative inline-flex items-center cursor-pointer">
+        <label className="toggle relative inline-flex items-center cursor-pointer">
           <input
             type="checkbox"
-            className="sr-only peer"
+            className="sr-only"
             checked={enabled}
             onChange={handleToggle}
             disabled={loading}
           />
-          <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-yellow-400 rounded-full peer peer-checked:bg-black transition-all"></div>
-          <div className="absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow peer-checked:translate-x-5 transition-transform"></div>
+          <div className="toggle-track"></div>
+          <div className="toggle-knob"></div>
         </label>
         <span className="text-black font-medium opacity-80">Enabled</span>
       </div>
