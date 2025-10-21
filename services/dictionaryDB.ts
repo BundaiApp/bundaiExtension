@@ -1,0 +1,206 @@
+interface JMDictEntry {
+  kanji?: string[]
+  kana?: string[]
+  senses?: Array<{
+    gloss: string[]
+  }>
+}
+
+class DictionaryDB {
+  private static instance: DictionaryDB
+  private db: IDBDatabase | null = null
+  private readonly DB_NAME = "BundaiDictionaryDB"
+  private readonly DB_VERSION = 1
+  private readonly STORE_NAME = "jmdict"
+  private initPromise: Promise<void> | null = null
+
+  private constructor() {}
+
+  public static getInstance(): DictionaryDB {
+    if (!DictionaryDB.instance) {
+      DictionaryDB.instance = new DictionaryDB()
+    }
+    return DictionaryDB.instance
+  }
+
+  /**
+   * Initialize database - loads JSON only if database is empty
+   */
+  public async initialize(): Promise<void> {
+    if (this.initPromise) {
+      return this.initPromise
+    }
+
+    this.initPromise = this._initialize()
+    return this.initPromise
+  }
+
+  private async _initialize(): Promise<void> {
+    try {
+      // Open database
+      this.db = await this.openDatabase()
+
+      // Check if already populated
+      const count = await this.getCount()
+      
+      if (count === 0) {
+        console.log("[DictionaryDB] Database empty, loading JMdict data...")
+        await this.loadJMdictData()
+        console.log("[DictionaryDB] Database populated successfully")
+      } else {
+        console.log(`[DictionaryDB] Database already populated with ${count} entries`)
+      }
+    } catch (error) {
+      console.error("[DictionaryDB] Failed to initialize:", error)
+      throw error
+    }
+  }
+
+  private openDatabase(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.DB_NAME, this.DB_VERSION)
+
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => resolve(request.result)
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result
+
+        // Create object store with auto-incrementing id
+        if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+          const store = db.createObjectStore(this.STORE_NAME, {
+            keyPath: "id",
+            autoIncrement: true
+          })
+
+          // Create indexes for fast lookups
+          store.createIndex("kanji", "kanji", { unique: false, multiEntry: true })
+          store.createIndex("kana", "kana", { unique: false, multiEntry: true })
+        }
+      }
+    })
+  }
+
+  private async getCount(): Promise<number> {
+    if (!this.db) throw new Error("Database not initialized")
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.STORE_NAME], "readonly")
+      const store = transaction.objectStore(this.STORE_NAME)
+      const request = store.count()
+
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  private async loadJMdictData(): Promise<void> {
+    try {
+      // Fetch the JSON file (web_accessible_resource)
+      const response = await fetch(
+        chrome.runtime.getURL("assets/data/japanese/jmdict-simplified-flat-full.json")
+      )
+      const data: JMDictEntry[] = await response.json()
+
+      if (!this.db) throw new Error("Database not initialized")
+
+      // Batch insert for performance
+      const transaction = this.db.transaction([this.STORE_NAME], "readwrite")
+      const store = transaction.objectStore(this.STORE_NAME)
+
+      let processed = 0
+      const batchSize = 1000
+
+      for (let i = 0; i < data.length; i += batchSize) {
+        const batch = data.slice(i, i + batchSize)
+        
+        for (const entry of batch) {
+          store.add(entry)
+        }
+
+        processed += batch.length
+        if (processed % 10000 === 0) {
+          console.log(`[DictionaryDB] Loaded ${processed}/${data.length} entries`)
+        }
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+      })
+
+      console.log(`[DictionaryDB] Successfully loaded ${data.length} entries`)
+    } catch (error) {
+      console.error("[DictionaryDB] Failed to load JMdict data:", error)
+      throw error
+    }
+  }
+
+  /**
+   * Lookup word by kanji
+   */
+  public async lookupByKanji(word: string): Promise<JMDictEntry | null> {
+    if (!this.db) {
+      await this.initialize()
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.STORE_NAME], "readonly")
+      const store = transaction.objectStore(this.STORE_NAME)
+      const index = store.index("kanji")
+      const request = index.get(word)
+
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  /**
+   * Lookup word by kana (reading)
+   */
+  public async lookupByKana(word: string): Promise<JMDictEntry | null> {
+    if (!this.db) {
+      await this.initialize()
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.STORE_NAME], "readonly")
+      const store = transaction.objectStore(this.STORE_NAME)
+      const index = store.index("kana")
+      const request = index.get(word)
+
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  /**
+   * Lookup word (tries kanji first, then kana)
+   */
+  public async lookup(word: string): Promise<JMDictEntry | null> {
+    const kanjiResult = await this.lookupByKanji(word)
+    if (kanjiResult) return kanjiResult
+
+    return this.lookupByKana(word)
+  }
+
+  /**
+   * Clear database (for debugging/reset)
+   */
+  public async clear(): Promise<void> {
+    if (!this.db) {
+      await this.initialize()
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.STORE_NAME], "readwrite")
+      const store = transaction.objectStore(this.STORE_NAME)
+      const request = store.clear()
+
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+}
+
+export default DictionaryDB.getInstance()

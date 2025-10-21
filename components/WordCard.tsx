@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react"
 import { toRomaji } from "wanakana"
 
 import { useFlashcardService } from "../hooks/useFlashcardService"
+import dictionaryDB from "../services/dictionaryDB"
 
 import "../style.css"
 
@@ -53,48 +54,21 @@ const WordCard: React.FC<WordCardProps> = ({
     // Get the current word's first gloss (correct answer)
     const correctAnswer = currentEntry.senses?.[0]?.gloss?.[0] || currentWord
 
-    // Find adjacent entries in the dictionary
-    const adjacentGlosses: string[] = []
+    // Generate alternative meanings as quiz options
+    const allMeanings = currentEntry.senses?.flatMap(s => s.gloss).filter(Boolean) || []
+    const alternativeAnswers = allMeanings.filter(m => m !== correctAnswer).slice(0, 3)
 
-    // Try to find the current entry in the global dictionary array
-    if (window.jmdictData) {
-      const currentIndex = window.jmdictData.findIndex(
-        (entry) =>
-          entry.kana?.includes(currentEntry.kana?.[0] || currentWord) ||
-          (entry.kanji && entry.kanji.includes(currentWord))
-      )
-
-      if (currentIndex !== -1) {
-        // Get glosses from entries before and after current entry
-        for (
-          let i = Math.max(0, currentIndex - 2);
-          i <= Math.min(window.jmdictData.length - 1, currentIndex + 2);
-          i++
-        ) {
-          if (
-            i !== currentIndex &&
-            window.jmdictData[i]?.senses?.[0]?.gloss?.[0]
-          ) {
-            const adjacentGloss = window.jmdictData[i].senses[0].gloss[0]
-            if (adjacentGloss !== correctAnswer) {
-              adjacentGlosses.push(adjacentGloss)
-            }
-          }
-        }
-      }
-    }
-
-    // If we don't have enough adjacent glosses, add fallback options
-    while (adjacentGlosses.length < 3) {
-      adjacentGlosses.push(`Option ${adjacentGlosses.length + 1}`)
+    // If we don't have enough alternatives, add fallback options
+    while (alternativeAnswers.length < 3) {
+      alternativeAnswers.push(`Option ${alternativeAnswers.length + 1}`)
     }
 
     // Shuffling the answers using fisher yates algorithm
-    const allAnswers = [correctAnswer, ...adjacentGlosses.slice(0, 3)]
+    const allAnswers = [correctAnswer, ...alternativeAnswers.slice(0, 3)]
     for (let i = allAnswers.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [allAnswers[i], allAnswers[j]] = [allAnswers[j], allAnswers[i]]
-  }
+      const j = Math.floor(Math.random() * (i + 1));
+      [allAnswers[i], allAnswers[j]] = [allAnswers[j], allAnswers[i]]
+    }
 
     // Return the shuffled array
     return allAnswers
@@ -133,17 +107,16 @@ const WordCard: React.FC<WordCardProps> = ({
   useEffect(() => {
     const loadEntry = async () => {
       if (!word) return
-      if (!window.jmdictLoaded) {
-        await new Promise<void>((resolve) => {
-          const check = () =>
-            window.jmdictLoaded ? resolve() : setTimeout(check, 50)
-          check()
-        })
+      
+      try {
+        const foundEntry = await dictionaryDB.lookup(word)
+        setEntry(foundEntry || null)
+      } catch (error) {
+        console.error("[WordCard] Failed to lookup word:", error)
+        setEntry(null)
+      } finally {
+        setIsLoadingEntry(false)
       }
-      const foundEntry =
-        window.jmdictIndex?.[word] || window.jmdictKanaIndex?.[word]
-      setEntry(foundEntry || null)
-      setIsLoadingEntry(false)
     }
 
     if (word) {

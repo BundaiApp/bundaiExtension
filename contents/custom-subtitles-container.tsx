@@ -9,6 +9,7 @@ import { toRomaji } from "wanakana"
 import WordCard from "../components/WordCard"
 import client from "../graphql"
 import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
+import dictionaryDB from "../services/dictionaryDB"
 
 export const getStyle = () => {
   const style = document.createElement("style")
@@ -44,24 +45,12 @@ interface SubtitleSettings {
   gap: number
 }
 
-interface JMDictEntry {
-  kanji?: string[]
-  kana?: string[]
-  senses?: Array<{
-    gloss: string[]
-  }>
-}
-
 interface Token {
   surface_form: string
 }
 
 declare global {
   interface Window {
-    jmdictData: JMDictEntry[]
-    jmdictIndex: Record<string, JMDictEntry>
-    jmdictKanaIndex: Record<string, JMDictEntry>
-    jmdictLoaded: boolean
     kuromojiTokenizer: any
   }
 }
@@ -228,6 +217,7 @@ class CustomSubtitleContainer {
 
   private async initializeJapanese(): Promise<void> {
     try {
+      // Initialize kuromoji tokenizer
       if (!window.kuromojiTokenizer) {
         const tokenizer = await new Promise<any>((resolve, reject) => {
           kuromoji
@@ -243,42 +233,12 @@ class CustomSubtitleContainer {
             })
         })
         window.kuromojiTokenizer = tokenizer
+        console.log("[Custom Subtitles] Kuromoji tokenizer loaded")
       }
 
-      if (!window.jmdictLoaded) {
-        try {
-          const response = await fetch(
-            chrome.runtime.getURL(
-              "assets/data/japanese/jmdict-simplified-flat-full.json"
-            )
-          )
-          window.jmdictData = await response.json()
-          window.jmdictIndex = {}
-          window.jmdictKanaIndex = {}
-
-          window.jmdictData.forEach((entry) => {
-            if (Array.isArray(entry.kanji)) {
-              entry.kanji.forEach((kanji) => {
-                window.jmdictIndex[kanji] = entry
-              })
-            }
-            if (Array.isArray(entry.kana)) {
-              entry.kana.forEach((kana) => {
-                window.jmdictKanaIndex[kana] = entry
-              })
-            }
-          })
-
-          window.jmdictLoaded = true
-          console.log("[Custom Subtitles] JMdict loaded:", window.jmdictData.length, "entries")
-        } catch (e) {
-          console.error("[Custom Subtitles] Failed to load JMdict:", e)
-          window.jmdictData = []
-          window.jmdictIndex = {}
-          window.jmdictKanaIndex = {}
-          window.jmdictLoaded = true
-        }
-      }
+      // Initialize dictionary database (singleton, loads JSON once if needed)
+      await dictionaryDB.initialize()
+      console.log("[Custom Subtitles] Dictionary database ready")
 
       this.isInitialized = true
     } catch (error) {
