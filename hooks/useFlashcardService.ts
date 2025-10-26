@@ -8,6 +8,7 @@ interface FlashcardData {
   hiragana: string
   meanings: string[]
   quizAnswers: string[]
+  source?: string
 }
 
 interface UseFlashcardServiceReturn {
@@ -29,6 +30,7 @@ export const useFlashcardService = (): UseFlashcardServiceReturn => {
   }, [])
 
   const addFlashcard = useCallback(async (data: FlashcardData) => {
+    console.log("[useFlashcardService] Received data:", data)
     setIsLoading(true)
     setError(null)
     setSuccess(false) // Reset success at the start of each request
@@ -41,11 +43,15 @@ export const useFlashcardService = (): UseFlashcardServiceReturn => {
         throw new Error("User not authenticated")
       }
 
-      // Send message to background script or use direct approach
-      const result = await sendFlashcardRequest({
+      const payload = {
         ...data,
-        userId
-      })
+        userId,
+        source: data.source || "extension"
+      }
+      console.log("[useFlashcardService] Sending payload:", payload)
+      
+      // Send message to background script or use direct approach
+      const result = await sendFlashcardRequest(payload)
 
       setSuccess(true)
       console.log("Flashcard added successfully:", result)
@@ -79,6 +85,7 @@ export const useFlashcardService = (): UseFlashcardServiceReturn => {
   const sendToBackground = (
     payload: FlashcardData & { userId: string }
   ): Promise<any> => {
+    console.log("[useFlashcardService] Sending to background:", payload)
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         {
@@ -119,8 +126,8 @@ export const useFlashcardService = (): UseFlashcardServiceReturn => {
         },
         body: JSON.stringify({
           query: `
-          mutation AddFlashCard($userId: ID!, $kanjiName: String!, $hiragana: String!, $meanings: [String!]!, $quizAnswers: [String!]!) {
-            addFlashCard(userId: $userId, kanjiName: $kanjiName, hiragana: $hiragana, meanings: $meanings, quizAnswers: $quizAnswers) {
+          mutation AddFlashCard($userId: ID!, $kanjiName: String!, $hiragana: String!, $meanings: [String!]!, $quizAnswers: [String!]!, $source: String) {
+            addFlashCard(userId: $userId, kanjiName: $kanjiName, hiragana: $hiragana, meanings: $meanings, quizAnswers: $quizAnswers, source: $source) {
               _id
               kanjiName
               hiragana

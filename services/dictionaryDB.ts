@@ -200,6 +200,76 @@ class DictionaryDB {
   }
 
   /**
+   * Get random entries for quiz generation
+   */
+  public async getRandomEntries(count: number, excludeWord?: string): Promise<JMDictEntry[]> {
+    if (!this.db) {
+      await this.initialize()
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.STORE_NAME], "readonly")
+      const store = transaction.objectStore(this.STORE_NAME)
+      const countRequest = store.count()
+
+      countRequest.onsuccess = () => {
+        const total = countRequest.result
+        if (total === 0) {
+          resolve([])
+          return
+        }
+
+        const results: JMDictEntry[] = []
+        const randomKeys: number[] = []
+        
+        // Generate random keys (IDs start from 1 in auto-increment)
+        while (randomKeys.length < Math.min(count * 2, 20)) {
+          const randomKey = Math.floor(Math.random() * total) + 1
+          if (!randomKeys.includes(randomKey)) {
+            randomKeys.push(randomKey)
+          }
+        }
+
+        let fetched = 0
+
+        // Fetch each random entry by key
+        randomKeys.forEach((key) => {
+          const getRequest = store.get(key)
+
+          getRequest.onsuccess = () => {
+            fetched++
+            const entry = getRequest.result as JMDictEntry | undefined
+
+            if (entry && entry.senses?.[0]?.gloss?.[0]) {
+              // Exclude the current word if specified
+              const entryWords = [...(entry.kanji || []), ...(entry.kana || [])]
+              const shouldExclude = excludeWord && entryWords.some(w => w === excludeWord)
+              
+              if (!shouldExclude && results.length < count) {
+                results.push(entry)
+              }
+            }
+
+            // Resolve when all requests complete
+            if (fetched === randomKeys.length) {
+              resolve(results)
+            }
+          }
+
+          getRequest.onerror = () => {
+            fetched++
+            if (fetched === randomKeys.length) {
+              resolve(results)
+            }
+          }
+        })
+      }
+
+      countRequest.onerror = () => reject(countRequest.error)
+    })
+  }
+
+  /**
    * Clear database (for debugging/reset)
    */
   public async clear(): Promise<void> {

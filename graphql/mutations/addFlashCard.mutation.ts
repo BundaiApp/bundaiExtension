@@ -6,6 +6,7 @@ export interface AddFlashCardVariables {
   hiragana?: string
   meanings?: string[]
   quizAnswers?: string[]
+  source?: string
 }
 
 export interface AddFlashCardResponse {
@@ -25,6 +26,7 @@ export const ADD_FLASH_CARD_MUTATION = gql`
     $hiragana: String
     $meanings: [String]
     $quizAnswers: [String]
+    $source: String
   ) {
     addFlashCard(
       userId: $userId
@@ -32,6 +34,7 @@ export const ADD_FLASH_CARD_MUTATION = gql`
       hiragana: $hiragana
       meanings: $meanings
       quizAnswers: $quizAnswers
+      source: $source
     ) {
       userId
       kanjiName

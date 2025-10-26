@@ -154,7 +154,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ===== FLASH CARD HANDLERS =====
 async function handleAddFlashCard(flashCardData) {
-  const { userId, kanjiName, hiragana, meanings, quizAnswers } = flashCardData
+  console.log("[Background] handleAddFlashCard received:", flashCardData)
+  const { userId, kanjiName, hiragana, meanings, quizAnswers, source } = flashCardData
+  console.log("[Background] Extracted source:", source)
 
   try {
     await storageReady
@@ -175,15 +177,19 @@ async function handleAddFlashCard(flashCardData) {
       }
     })
 
+    const variables = {
+      userId,
+      kanjiName,
+      hiragana,
+      meanings,
+      quizAnswers,
+      source: source || "extension"
+    }
+    console.log("[Background] Apollo mutation variables:", variables)
+    
     const result = await authenticatedClient.mutate({
       mutation: ADD_FLASH_CARD_MUTATION,
-      variables: {
-        userId,
-        kanjiName,
-        hiragana,
-        meanings,
-        quizAnswers
-      }
+      variables
     })
 
     console.log("Background script: Flashcard added successfully", result.data)
@@ -201,7 +207,7 @@ async function handleAddFlashCard(flashCardData) {
 }
 
 async function handleAddFlashCardDirect(flashCardData) {
-  const { userId, kanjiName, hiragana, meanings, quizAnswers } = flashCardData
+  const { userId, kanjiName, hiragana, meanings, quizAnswers, source } = flashCardData
 
   await storageReady
   const token = await storage.get("token")
@@ -218,8 +224,8 @@ async function handleAddFlashCardDirect(flashCardData) {
     },
     body: JSON.stringify({
       query: `
-        mutation AddFlashCard($userId: ID!, $kanjiName: String!, $hiragana: String!, $meanings: [String!]!, $quizAnswers: [String!]!) {
-          addFlashCard(userId: $userId, kanjiName: $kanjiName, hiragana: $hiragana, meanings: $meanings, quizAnswers: $quizAnswers) {
+        mutation AddFlashCard($userId: ID!, $kanjiName: String!, $hiragana: String!, $meanings: [String!]!, $quizAnswers: [String!]!, $source: String) {
+          addFlashCard(userId: $userId, kanjiName: $kanjiName, hiragana: $hiragana, meanings: $meanings, quizAnswers: $quizAnswers, source: $source) {
             _id
             kanjiName
             hiragana
@@ -233,7 +239,8 @@ async function handleAddFlashCardDirect(flashCardData) {
         kanjiName,
         hiragana,
         meanings,
-        quizAnswers
+        quizAnswers,
+        source: source || "extension"
       }
     })
   })

@@ -47,16 +47,28 @@ const WordCard: React.FC<WordCardProps> = ({
 
   useEffect(() => resetState(), [word, resetState])
 
-  const generateQuizAnswers = (
+  const generateQuizAnswers = async (
     currentWord: string,
     currentEntry: JMDictEntry
-  ) => {
+  ): Promise<string[]> => {
     // Get the current word's first gloss (correct answer)
     const correctAnswer = currentEntry.senses?.[0]?.gloss?.[0] || currentWord
 
-    // Generate alternative meanings as quiz options
-    const allMeanings = currentEntry.senses?.flatMap(s => s.gloss).filter(Boolean) || []
-    const alternativeAnswers = allMeanings.filter(m => m !== correctAnswer).slice(0, 3)
+    // Get random entries from dictionary for alternative answers
+    const alternativeAnswers: string[] = []
+
+    try {
+      const randomEntries = await dictionaryDB.getRandomEntries(3, currentWord)
+      
+      for (const entry of randomEntries) {
+        const gloss = entry.senses?.[0]?.gloss?.[0]
+        if (gloss && gloss !== correctAnswer) {
+          alternativeAnswers.push(gloss)
+        }
+      }
+    } catch (error) {
+      console.error("[WordCard] Failed to get random entries:", error)
+    }
 
     // If we don't have enough alternatives, add fallback options
     while (alternativeAnswers.length < 3) {
@@ -74,20 +86,29 @@ const WordCard: React.FC<WordCardProps> = ({
     return allAnswers
   }
   const handleAddFlashcard = async () => {
-    if (!entry || isLoadingEntry || !word) return
+    if (!entry || isLoadingEntry || !word) {
+      console.log("[WordCard] Cannot add flashcard:", { entry, isLoadingEntry, word })
+      return
+    }
+    
+    console.log("[WordCard] Starting to add flashcard for:", word)
+    
     try {
       const kanjiName = entry.kanji?.[0] || word
       const hiragana = entry.kana?.[0] || word
       const meanings =
         entry.senses?.flatMap((s) => s.gloss).filter(Boolean) || []
-      // const quizAnswers = [
-      //   ...(entry.kana || []),
-      //   ...(entry.kanji || [])
-      // ].filter(Boolean)
-      const quizAnswers = generateQuizAnswers(word, entry)
-      await addFlashcard({ kanjiName, hiragana, meanings, quizAnswers })
+      
+      console.log("[WordCard] Generating quiz answers...")
+      const quizAnswers = await generateQuizAnswers(word, entry)
+      console.log("[WordCard] Quiz answers generated:", quizAnswers)
+      
+      const flashcardData = { kanjiName, hiragana, meanings, quizAnswers, source: "extension" }
+      console.log("[WordCard] Adding flashcard with data:", flashcardData)
+      await addFlashcard(flashcardData)
+      console.log("[WordCard] Flashcard added successfully")
     } catch (err) {
-      console.error("Error in handleAddFlashcard:", err)
+      console.error("[WordCard] Error in handleAddFlashcard:", err)
     }
   }
 
