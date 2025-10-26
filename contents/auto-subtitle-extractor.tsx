@@ -4,6 +4,7 @@ import kuromoji from "kuromoji"
 import { createRoot } from "react-dom/client"
 import React from "react"
 import WordCard from "~components/WordCard"
+import DictionaryLoadingOverlay from "~components/DictionaryLoadingOverlay"
 import dictionaryDB from "~services/dictionaryDB"
 
 export const getStyle = () => {
@@ -25,6 +26,42 @@ declare global {
   interface Window {
     kuromojiTokenizer: any
     __bundaiHoverListenersAttached?: boolean
+    __bundaiLoadingOverlayRoot?: any
+  }
+}
+
+// Global loading overlay manager
+let loadingOverlayContainer: HTMLDivElement | null = null
+let loadingOverlayRoot: any = null
+
+function showLoadingOverlay(progress: number, total: number) {
+  if (!loadingOverlayContainer) {
+    loadingOverlayContainer = document.createElement("div")
+    loadingOverlayContainer.id = "bundai-loading-overlay-root"
+    document.body.appendChild(loadingOverlayContainer)
+    loadingOverlayRoot = createRoot(loadingOverlayContainer)
+  }
+  
+  loadingOverlayRoot.render(
+    <DictionaryLoadingOverlay progress={progress} total={total} isVisible={true} />
+  )
+}
+
+function hideLoadingOverlay() {
+  if (loadingOverlayRoot) {
+    loadingOverlayRoot.render(
+      <DictionaryLoadingOverlay progress={0} total={0} isVisible={false} />
+    )
+    setTimeout(() => {
+      if (loadingOverlayRoot) {
+        loadingOverlayRoot.unmount()
+        loadingOverlayRoot = null
+      }
+      if (loadingOverlayContainer) {
+        loadingOverlayContainer.remove()
+        loadingOverlayContainer = null
+      }
+    }, 300)
   }
 }
 
@@ -132,14 +169,23 @@ class YouTubeSubtitleManipulator {
         console.log("[YouTube Manipulator] Kuromoji tokenizer loaded")
       }
 
+      // Set up progress callback for dictionary loading
+      dictionaryDB.onProgress((progress, total) => {
+        showLoadingOverlay(progress, total)
+      })
+
       // Initialize dictionary database (singleton, loads JSON once if needed)
       await dictionaryDB.initialize()
       console.log("[YouTube Manipulator] Dictionary database ready")
+      
+      // Hide loading overlay when done
+      hideLoadingOverlay()
 
       this.isInitialized = true
       console.log("[YouTube Manipulator] Japanese processing ready - will process captions automatically")
     } catch (error) {
       console.error("[YouTube Manipulator] Failed to initialize Japanese processing:", error)
+      hideLoadingOverlay()
       this.isInitialized = false
     }
   }
@@ -611,96 +657,6 @@ function initializeYouTubeManipulator() {
   console.log("[YouTube Manipulator] Instance created")
 }
 
-// Show refresh banner
-function showRefreshBanner() {
-  // Remove existing banner if any
-  const existing = document.getElementById('bundai-refresh-banner')
-  if (existing) existing.remove()
-  
-  const banner = document.createElement('div')
-  banner.id = 'bundai-refresh-banner'
-  banner.style.cssText = `
-    position: fixed;
-    top: 60px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #FCD34D;
-    color: #000;
-    padding: 12px 24px;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    z-index: 999999;
-    font-family: Arial, sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    animation: slideDown 0.3s ease-out;
-  `
-  
-  banner.innerHTML = `
-    <span>⚡ Bundai settings changed</span>
-    <button id="bundai-refresh-btn" style="
-      background: #000;
-      color: #FCD34D;
-      border: none;
-      padding: 6px 16px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 13px;
-    ">Refresh Page</button>
-    <button id="bundai-dismiss-btn" style="
-      background: transparent;
-      border: none;
-      color: #666;
-      cursor: pointer;
-      font-size: 18px;
-      padding: 0 4px;
-    ">✕</button>
-  `
-  
-  // Add animation keyframes
-  if (!document.getElementById('bundai-banner-style')) {
-    const style = document.createElement('style')
-    style.id = 'bundai-banner-style'
-    style.textContent = `
-      @keyframes slideDown {
-        from {
-          opacity: 0;
-          transform: translateX(-50%) translateY(-20px);
-        }
-        to {
-          opacity: 1;
-          transform: translateX(-50%) translateY(0);
-        }
-      }
-    `
-    document.head.appendChild(style)
-  }
-  
-  document.body.appendChild(banner)
-  
-  // Refresh button
-  document.getElementById('bundai-refresh-btn')?.addEventListener('click', () => {
-    window.location.reload()
-  })
-  
-  // Dismiss button
-  document.getElementById('bundai-dismiss-btn')?.addEventListener('click', () => {
-    banner.remove()
-  })
-  
-  // Auto-dismiss after 10 seconds
-  setTimeout(() => {
-    if (banner.parentElement) {
-      banner.style.animation = 'slideDown 0.3s ease-out reverse'
-      setTimeout(() => banner.remove(), 300)
-    }
-  }, 10000)
-}
-
 // Global message listener - works even during reinitialization
 if (typeof chrome !== "undefined" && chrome.runtime) {
   console.log("[YouTube Manipulator] Registering global message listener")
@@ -718,11 +674,6 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         youtubeManipulator.setEnabled(newEnabled)
       }
       
-      // Show refresh banner if state actually changed
-      if (wasEnabled !== newEnabled && window.location.href.includes('youtube.com/watch')) {
-        showRefreshBanner()
-      }
-      
       sendResponse({ success: true })
       return true
     }
@@ -731,13 +682,6 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       sendResponse({ 
         useAutoGenerated: youtubeManipulator?.isEnabled || false 
       })
-      return true
-    }
-    
-    if (message.action === "showRefreshBanner") {
-      console.log("[YouTube Manipulator] Showing refresh banner")
-      showRefreshBanner()
-      sendResponse({ success: true })
       return true
     }
   })

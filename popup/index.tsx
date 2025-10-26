@@ -338,17 +338,6 @@ function MainPage({ onOpenTabs }) {
     
     // Show refresh message in popup
     setShowRefreshMessage(true)
-    
-    // Also try to show banner on page if content script is loaded
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id && tabs[0].url?.includes('youtube.com/watch')) {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: "showRefreshBanner"
-        }).catch(() => {
-          console.log("[Popup] Content script not loaded yet")
-        })
-      }
-    })
   }
 
   const handleRefreshVideoId = async () => {

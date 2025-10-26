@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client"
 import { toRomaji } from "wanakana"
 
 import WordCard from "../components/WordCard"
+import DictionaryLoadingOverlay from "../components/DictionaryLoadingOverlay"
 import client from "../graphql"
 import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
 import dictionaryDB from "../services/dictionaryDB"
@@ -52,6 +53,41 @@ interface Token {
 declare global {
   interface Window {
     kuromojiTokenizer: any
+  }
+}
+
+// Global loading overlay manager
+let loadingOverlayContainer: HTMLDivElement | null = null
+let loadingOverlayRoot: any = null
+
+function showLoadingOverlay(progress: number, total: number) {
+  if (!loadingOverlayContainer) {
+    loadingOverlayContainer = document.createElement("div")
+    loadingOverlayContainer.id = "bundai-loading-overlay-root"
+    document.body.appendChild(loadingOverlayContainer)
+    loadingOverlayRoot = createRoot(loadingOverlayContainer)
+  }
+  
+  loadingOverlayRoot.render(
+    <DictionaryLoadingOverlay progress={progress} total={total} isVisible={true} />
+  )
+}
+
+function hideLoadingOverlay() {
+  if (loadingOverlayRoot) {
+    loadingOverlayRoot.render(
+      <DictionaryLoadingOverlay progress={0} total={0} isVisible={false} />
+    )
+    setTimeout(() => {
+      if (loadingOverlayRoot) {
+        loadingOverlayRoot.unmount()
+        loadingOverlayRoot = null
+      }
+      if (loadingOverlayContainer) {
+        loadingOverlayContainer.remove()
+        loadingOverlayContainer = null
+      }
+    }, 300)
   }
 }
 
@@ -236,13 +272,22 @@ class CustomSubtitleContainer {
         console.log("[Custom Subtitles] Kuromoji tokenizer loaded")
       }
 
+      // Set up progress callback for dictionary loading
+      dictionaryDB.onProgress((progress, total) => {
+        showLoadingOverlay(progress, total)
+      })
+
       // Initialize dictionary database (singleton, loads JSON once if needed)
       await dictionaryDB.initialize()
       console.log("[Custom Subtitles] Dictionary database ready")
+      
+      // Hide loading overlay when done
+      hideLoadingOverlay()
 
       this.isInitialized = true
     } catch (error) {
       console.error("[Custom Subtitles] Failed to initialize Japanese processing:", error)
+      hideLoadingOverlay()
       this.isInitialized = false
     }
   }
@@ -1015,69 +1060,6 @@ const WordCardManager: React.FC<{
   )
 }
 
-// Show refresh banner
-function showRefreshBanner() {
-  const existing = document.getElementById('bundai-refresh-banner')
-  if (existing) existing.remove()
-  
-  const banner = document.createElement('div')
-  banner.id = 'bundai-refresh-banner'
-  banner.style.cssText = `
-    position: fixed;
-    top: 60px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #FCD34D;
-    color: #000;
-    padding: 12px 24px;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    z-index: 999999;
-    font-family: Arial, sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  `
-  
-  banner.innerHTML = `
-    <span>⚡ Bundai settings changed</span>
-    <button id="bundai-refresh-btn" style="
-      background: #000;
-      color: #FCD34D;
-      border: none;
-      padding: 6px 16px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 13px;
-    ">Refresh Page</button>
-    <button id="bundai-dismiss-btn" style="
-      background: transparent;
-      border: none;
-      color: #666;
-      cursor: pointer;
-      font-size: 18px;
-      padding: 0 4px;
-    ">✕</button>
-  `
-  
-  document.body.appendChild(banner)
-  
-  document.getElementById('bundai-refresh-btn')?.addEventListener('click', () => {
-    window.location.reload()
-  })
-  
-  document.getElementById('bundai-dismiss-btn')?.addEventListener('click', () => {
-    banner.remove()
-  })
-  
-  setTimeout(() => {
-    if (banner.parentElement) banner.remove()
-  }, 10000)
-}
-
 let subtitleContainer: CustomSubtitleContainer | null = null
 
 // Track initial state to detect changes
@@ -1120,11 +1102,6 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       
       if (subtitleContainer) {
         subtitleContainer.setEnabled(newEnabled)
-      }
-      
-      // Show refresh banner if state changed and we're on watch page
-      if (wasEnabled !== undefined && wasEnabled !== newEnabled && window.location.href.includes('youtube.com/watch')) {
-        showRefreshBanner()
       }
       
       sendResponse({ success: true })

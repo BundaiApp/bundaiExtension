@@ -13,6 +13,7 @@ class DictionaryDB {
   private readonly DB_VERSION = 1
   private readonly STORE_NAME = "jmdict"
   private initPromise: Promise<void> | null = null
+  private progressCallback: ((progress: number, total: number) => void) | null = null
 
   private constructor() {}
 
@@ -21,6 +22,13 @@ class DictionaryDB {
       DictionaryDB.instance = new DictionaryDB()
     }
     return DictionaryDB.instance
+  }
+
+  /**
+   * Set progress callback for loading
+   */
+  public onProgress(callback: (progress: number, total: number) => void): void {
+    this.progressCallback = callback
   }
 
   /**
@@ -104,32 +112,39 @@ class DictionaryDB {
 
       if (!this.db) throw new Error("Database not initialized")
 
-      // Batch insert for performance
-      const transaction = this.db.transaction([this.STORE_NAME], "readwrite")
-      const store = transaction.objectStore(this.STORE_NAME)
-
+      const total = data.length
       let processed = 0
       const batchSize = 1000
 
+      // Process in batches with separate transactions
       for (let i = 0; i < data.length; i += batchSize) {
         const batch = data.slice(i, i + batchSize)
+        
+        // Create new transaction for each batch
+        const transaction = this.db.transaction([this.STORE_NAME], "readwrite")
+        const store = transaction.objectStore(this.STORE_NAME)
         
         for (const entry of batch) {
           store.add(entry)
         }
 
+        // Wait for this batch to complete
+        await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve()
+          transaction.onerror = () => reject(transaction.error)
+        })
+
         processed += batch.length
-        if (processed % 10000 === 0) {
-          console.log(`[DictionaryDB] Loaded ${processed}/${data.length} entries`)
+        
+        // Report progress
+        if (this.progressCallback) {
+          this.progressCallback(processed, total)
         }
+        
+        console.log(`[DictionaryDB] Loaded ${processed}/${total} entries`)
       }
 
-      await new Promise<void>((resolve, reject) => {
-        transaction.oncomplete = () => resolve()
-        transaction.onerror = () => reject(transaction.error)
-      })
-
-      console.log(`[DictionaryDB] Successfully loaded ${data.length} entries`)
+      console.log(`[DictionaryDB] Successfully loaded ${total} entries`)
     } catch (error) {
       console.error("[DictionaryDB] Failed to load JMdict data:", error)
       throw error
