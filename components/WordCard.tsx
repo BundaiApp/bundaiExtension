@@ -13,6 +13,15 @@ interface JMDictEntry {
   senses?: Array<{ gloss: string[] }>
 }
 
+interface WordCardStyles {
+  backgroundColor?: string
+  textColor?: string
+  fontSize?: number
+  borderRadius?: number
+  borderColor?: string
+  wordFontSize?: number
+}
+
 interface WordCardProps {
   word: string
   mouseX: number
@@ -21,6 +30,7 @@ interface WordCardProps {
   isSticky: boolean
   onClose: () => void
   containerRect: DOMRect | null
+  customStyles?: WordCardStyles
 }
 
 const WordCard: React.FC<WordCardProps> = ({
@@ -30,7 +40,8 @@ const WordCard: React.FC<WordCardProps> = ({
   isVisible,
   isSticky,
   onClose,
-  containerRect
+  containerRect,
+  customStyles = {}
 }) => {
   const [entry, setEntry] = useState<JMDictEntry | null>(null)
   const [isLoadingEntry, setIsLoadingEntry] = useState(true)
@@ -184,9 +195,26 @@ const WordCard: React.FC<WordCardProps> = ({
     romaji = ""
   }
 
+  // Apply custom styles - only include defined values to override CSS
+  const containerStyle: React.CSSProperties = {}
+  if (customStyles.backgroundColor) containerStyle.backgroundColor = customStyles.backgroundColor
+  if (customStyles.textColor) containerStyle.color = customStyles.textColor
+  if (customStyles.borderRadius !== undefined) containerStyle.borderRadius = `${customStyles.borderRadius}px`
+  if (customStyles.borderColor) containerStyle.borderColor = customStyles.borderColor
+  if (customStyles.fontSize !== undefined) containerStyle.fontSize = `${customStyles.fontSize}px`
+
+  const wordStyle: React.CSSProperties = {}
+  if (customStyles.wordFontSize !== undefined) wordStyle.fontSize = `${customStyles.wordFontSize}px`
+  if (customStyles.textColor) wordStyle.color = customStyles.textColor
+  
+  // Debug log
+  if (Object.keys(customStyles).length > 0) {
+    console.log("[WordCard] Applying custom styles:", { customStyles, containerStyle, wordStyle })
+  }
+
   return (
     <div ref={cardRef} style={cardStyle}>
-      <div className="wordcard-container">
+      <div className="wordcard-container" style={containerStyle}>
         <div className="wordcard-buttons">
           <button
             className={`wordcard-button ${isAddingFlashcard ? "wordcard-button-disabled" : ""}`}
@@ -204,7 +232,7 @@ const WordCard: React.FC<WordCardProps> = ({
         </div>
 
         {/* Word Display */}
-        <div className="wordcard-word">
+        <div className="wordcard-word" style={wordStyle}>
           {word}
         </div>
 

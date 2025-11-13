@@ -46,6 +46,15 @@ interface SubtitleSettings {
   gap: number
 }
 
+interface WordCardStyles {
+  backgroundColor?: string
+  textColor?: string
+  fontSize?: number
+  borderRadius?: number
+  borderColor?: string
+  wordFontSize?: number
+}
+
 interface Token {
   surface_form: string
 }
@@ -147,12 +156,40 @@ class CustomSubtitleContainer {
 
   private isJapaneseEnabled: boolean = true
   private isInitialized: boolean = false
+  private wordCardStyles: WordCardStyles = {}
 
   constructor() {
     this.setupMessageListener()
     this.initializeJapanese()
     this.requestInitialState()
     this.setupAutoSubtitleListener()
+    // Delay style loading to ensure background is ready
+    setTimeout(() => this.loadWordCardStyles(), 500)
+  }
+
+  private async loadWordCardStyles(): Promise<void> {
+    try {
+      const response = await new Promise<any>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { action: "getWordCardStyles" },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError)
+            } else {
+              resolve(response)
+            }
+          }
+        )
+      })
+      
+      if (response && response.styles) {
+        this.wordCardStyles = response.styles
+        console.log("[Custom Subtitles] Loaded WordCard styles:", this.wordCardStyles)
+        this.renderWordCard()
+      }
+    } catch (error) {
+      console.error("[Custom Subtitles] Failed to load WordCard styles:", error)
+    }
   }
 
   /**
@@ -469,6 +506,7 @@ class CustomSubtitleContainer {
         wordCard={this.wordCard}
         containerRect={containerRect}
         onClose={this.handleCardClose.bind(this)}
+        customStyles={this.wordCardStyles}
       />
     )
   }
@@ -920,6 +958,14 @@ class CustomSubtitleContainer {
           sendResponse({ enabled: this.isEnabled })
           return true
         }
+        
+        if (message.action === "setWordCardStyles") {
+          console.log("[Custom Subtitles] Processing setWordCardStyles:", message.styles)
+          this.wordCardStyles = message.styles || {}
+          this.renderWordCard()
+          sendResponse({ success: true })
+          return true
+        }
       })
     }
 
@@ -1046,7 +1092,8 @@ const WordCardManager: React.FC<{
   }
   containerRect: DOMRect | null
   onClose: () => void
-}> = ({ wordCard, containerRect, onClose }) => {
+  customStyles?: WordCardStyles
+}> = ({ wordCard, containerRect, onClose, customStyles }) => {
   return (
     <WordCard
       word={wordCard.word}
@@ -1056,6 +1103,7 @@ const WordCardManager: React.FC<{
       isSticky={wordCard.isSticky}
       onClose={onClose}
       containerRect={containerRect}
+      customStyles={customStyles}
     />
   )
 }
@@ -1104,6 +1152,19 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         subtitleContainer.setEnabled(newEnabled)
       }
       
+      sendResponse({ success: true })
+      return true
+    }
+    
+    if (message.action === "setWordCardStyles") {
+      console.log("[Custom Subtitles Global] Processing setWordCardStyles:", message.styles)
+      if (subtitleContainer) {
+        (subtitleContainer as any).wordCardStyles = message.styles || {}
+        // Call the private method to re-render
+        if (typeof (subtitleContainer as any).renderWordCard === 'function') {
+          (subtitleContainer as any).renderWordCard()
+        }
+      }
       sendResponse({ success: true })
       return true
     }
