@@ -197,8 +197,12 @@ class UniversalJapaneseReader {
             return
           }
           if (response) {
-            const enabled = response.extensionEnabled && response.universalReaderEnabled
-            console.log("[Universal Reader] Initial state:", enabled)
+            const isYouTube = window.location.hostname.includes("youtube.com")
+            // On non-YouTube pages, reader is always enabled (it's the only option)
+            // On YouTube, reader is only enabled in Reader mode
+            const enabled = response.extensionEnabled &&
+              (response.universalReaderEnabled || !isYouTube)
+            console.log("[Universal Reader] Initial state:", enabled, "isYouTube:", isYouTube)
             this.setEnabled(enabled)
           }
         }
@@ -233,7 +237,8 @@ class UniversalJapaneseReader {
   }
 
   private start() {
-    console.log("[Universal Reader] Starting...")
+    console.log("[Universal Reader] Starting... isInitialized:", this.isInitialized)
+    console.log("[Universal Reader] Kuromoji available:", !!window.kuromojiTokenizer)
     this.injectStyles()
     this.createWordCard()
     this.setupListeners()
@@ -435,7 +440,19 @@ class UniversalJapaneseReader {
       if (this.isSticky) return
 
       const info = this.getTextAtPoint(e.clientX, e.clientY)
-      if (!info || !this.containsJapanese(info.text)) {
+      if (!info) {
+        if (this.currentWord && !this.isSticky) {
+          this.hideWordCard()
+        }
+        return
+      }
+
+      // Debug: log when we detect text
+      if (this.containsJapanese(info.text)) {
+        console.log("[Universal Reader] Japanese text detected:", info.text.substring(0, 50))
+      }
+
+      if (!this.containsJapanese(info.text)) {
         if (this.currentWord && !this.isSticky) {
           this.hideWordCard()
         }
@@ -443,6 +460,7 @@ class UniversalJapaneseReader {
       }
 
       const word = this.getWordAtPosition(info.text, info.offset)
+      console.log("[Universal Reader] Word at position:", word)
       if (word && word !== this.currentWord) {
         this.showWordCard(word, e.clientX, e.clientY)
       } else if (!word && this.currentWord && !this.isSticky) {
