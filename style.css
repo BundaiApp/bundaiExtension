@@ -403,6 +403,7 @@ ytd-app .bundai-custom-subtitle-container,
 /* Colors - text */
 .text-black { color: #000; }
 .text-white { color: #fff; }
+.text-yellow-400 { color: #facc15; }
 .text-green-800 { color: #166534; }
 .text-green-700 { color: #15803d; }
 .text-green-600 { color: #16a34a; }

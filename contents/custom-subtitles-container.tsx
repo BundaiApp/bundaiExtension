@@ -18,11 +18,10 @@ export const getStyle = () => {
   return style
 }
 
-// Temporarily completely disabled
-// export const config: PlasmoCSConfig = {
-//   matches: ["*://*.youtube.com/watch*"],
-//   all_frames: false,
-// }
+export const config: PlasmoCSConfig = {
+  matches: ["*://*.youtube.com/watch*"],
+  all_frames: false
+}
 
 export interface SubtitleCue {
   start: number
