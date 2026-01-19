@@ -55,6 +55,14 @@ interface WordCardStyles {
   wordFontSize?: number
 }
 
+interface SubtitleContainerStyles {
+  backgroundColor?: string
+  textColor?: string
+  fontSize?: number
+  opacity?: number
+  borderRadius?: number
+}
+
 interface Token {
   surface_form: string
 }
@@ -161,6 +169,7 @@ class CustomSubtitleContainer {
   private isJapaneseEnabled: boolean = true
   private isInitialized: boolean = false
   private wordCardStyles: WordCardStyles = {}
+  private subtitleContainerStyles: SubtitleContainerStyles = {}
 
   constructor() {
     this.setupMessageListener()
@@ -168,7 +177,10 @@ class CustomSubtitleContainer {
     this.requestInitialState()
     this.setupAutoSubtitleListener()
     // Delay style loading to ensure background is ready
-    setTimeout(() => this.loadWordCardStyles(), 500)
+    setTimeout(() => {
+      this.loadWordCardStyles()
+      this.loadSubtitleContainerStyles()
+    }, 500)
   }
 
   private async loadWordCardStyles(): Promise<void> {
@@ -196,6 +208,57 @@ class CustomSubtitleContainer {
       }
     } catch (error) {
       console.error("[Custom Subtitles] Failed to load WordCard styles:", error)
+    }
+  }
+
+  private async loadSubtitleContainerStyles(): Promise<void> {
+    try {
+      const response = await new Promise<any>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { action: "getSubtitleContainerStyles" },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError)
+            } else {
+              resolve(response)
+            }
+          }
+        )
+      })
+
+      if (response && response.styles) {
+        this.subtitleContainerStyles = response.styles
+        console.log(
+          "[Custom Subtitles] Loaded subtitle container styles:",
+          this.subtitleContainerStyles
+        )
+        // Re-apply styles to subtitle elements
+        if (this.subtitle1Element) {
+          this.applySubtitleStyles(this.subtitle1Element, {
+            backgroundColor:
+              this.subtitleContainerStyles.backgroundColor || "#000000",
+            color: this.subtitleContainerStyles.textColor || "#ffffff",
+            fontSize: this.subtitleContainerStyles.fontSize || 32,
+            opacity: this.subtitleContainerStyles.opacity || 0.9,
+            borderRadius: this.subtitleContainerStyles.borderRadius || 8
+          })
+        }
+        if (this.subtitle2Element) {
+          this.applySubtitleStyles(this.subtitle2Element, {
+            backgroundColor:
+              this.subtitleContainerStyles.backgroundColor || "#000000",
+            color: this.subtitleContainerStyles.textColor || "#ffffff",
+            fontSize: this.subtitleContainerStyles.fontSize || 32,
+            opacity: this.subtitleContainerStyles.opacity || 0.9,
+            borderRadius: this.subtitleContainerStyles.borderRadius || 8
+          })
+        }
+      }
+    } catch (error) {
+      console.error(
+        "[Custom Subtitles] Failed to load subtitle container styles:",
+        error
+      )
     }
   }
 
@@ -555,20 +618,24 @@ class CustomSubtitleContainer {
     element: HTMLDivElement,
     subtitleSettings: any
   ): void {
+    const borderRadius = subtitleSettings.borderRadius ?? 8
+    const opacity = subtitleSettings.opacity ?? 0.9
+
     element.style.cssText = `
-      background: ${this.hexToRgba(subtitleSettings.backgroundColor, subtitleSettings.opacity)};
+      background: ${this.hexToRgba(subtitleSettings.backgroundColor, opacity)};
       color: ${subtitleSettings.color};
       font-size: ${subtitleSettings.fontSize}px;
       font-family: Arial, sans-serif;
       font-weight: bold;
       padding: 8px 16px;
-      border-radius: 6px;
+      border-radius: ${borderRadius}px;
       text-align: center;
       text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
-      line-height: 1.3;
+      line-height: 1.4;
       min-height: 20px;
       display: none;
       word-wrap: break-word;
+      white-space: pre-wrap;
       max-width: 100%;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
       cursor: default;
@@ -1040,6 +1107,39 @@ class CustomSubtitleContainer {
           return true
         }
 
+        if (message.action === "setSubtitleContainerStyles") {
+          console.log(
+            "[Custom Subtitles] Processing setSubtitleContainerStyles:",
+            message.styles
+          )
+          this.subtitleContainerStyles = message.styles || {}
+
+          // Apply styles to subtitle elements
+          if (this.subtitle1Element) {
+            this.applySubtitleStyles(this.subtitle1Element, {
+              backgroundColor:
+                this.subtitleContainerStyles.backgroundColor || "#000000",
+              color: this.subtitleContainerStyles.textColor || "#ffffff",
+              fontSize: this.subtitleContainerStyles.fontSize || 32,
+              opacity: this.subtitleContainerStyles.opacity || 0.9,
+              borderRadius: this.subtitleContainerStyles.borderRadius || 8
+            })
+          }
+          if (this.subtitle2Element) {
+            this.applySubtitleStyles(this.subtitle2Element, {
+              backgroundColor:
+                this.subtitleContainerStyles.backgroundColor || "#000000",
+              color: this.subtitleContainerStyles.textColor || "#ffffff",
+              fontSize: this.subtitleContainerStyles.fontSize || 32,
+              opacity: this.subtitleContainerStyles.opacity || 0.9,
+              borderRadius: this.subtitleContainerStyles.borderRadius || 8
+            })
+          }
+
+          sendResponse({ success: true })
+          return true
+        }
+
         if (message.action === "setUseAutoGeneratedSubtitles") {
           console.log(
             "[Custom Subtitles] setUseAutoGeneratedSubtitles:",
@@ -1314,6 +1414,19 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         if (typeof (subtitleContainer as any).renderWordCard === "function") {
           ;(subtitleContainer as any).renderWordCard()
         }
+      }
+      sendResponse({ success: true })
+      return true
+    }
+
+    if (message.action === "setSubtitleContainerStyles") {
+      console.log(
+        "[Custom Subtitles Global] Processing setSubtitleContainerStyles:",
+        message.styles
+      )
+      if (subtitleContainer) {
+        ;(subtitleContainer as any).subtitleContainerStyles =
+          message.styles || {}
       }
       sendResponse({ success: true })
       return true

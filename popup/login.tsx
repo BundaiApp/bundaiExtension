@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
 import { useMutation } from "@apollo/client"
+import React, { useState } from "react"
+
 import LOG_IN from "../graphql/mutations/logIn.mutation"
 import { storage, storageReady } from "../utils/secure-storage"
 
@@ -7,15 +8,22 @@ function validateEmail(email: string) {
   return String(email)
     .toLowerCase()
     .match(
-      /^(([^<>()[\]\\.,;:\s@\"]+(\.[^<>()[\]\\.,;:\s@\"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/,
-    );
+      /^(([^<>()[\]\\.,;:\s@\"]+(\.[^<>()[\]\\.,;:\s@\"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+    )
 }
 
-function Login({ onLogin, onShowRegister, onShowForgotPassword }: { onLogin?: () => void, onShowRegister?: () => void, onShowForgotPassword?: () => void }) {
+function Login({
+  onLogin,
+  onShowRegister,
+  onShowForgotPassword
+}: {
+  onLogin?: () => void
+  onShowRegister?: () => void
+  onShowForgotPassword?: () => void
+}) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
-  const [showPassword, setShowPassword] = useState(false)
   const [secureReady, setSecureReady] = useState(false)
   const [logIn, { loading }] = useMutation(LOG_IN)
 
@@ -63,57 +71,59 @@ function Login({ onLogin, onShowRegister, onShowForgotPassword }: { onLogin?: ()
   }
 
   return (
-    <form onSubmit={handleSubmit} className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
+    <form
+      onSubmit={handleSubmit}
+      className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
       <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
         <h1 className="text-xl font-extrabold text-black">Bundai Login</h1>
       </div>
       <input
-        id='email'
+        id="email"
         type="email"
         placeholder="Email"
         value={email}
-        onChange={e => setEmail(e.target.value)}
+        onChange={(e) => setEmail(e.target.value)}
         className="p-2 rounded border border-black"
         required
         disabled={!secureReady}
       />
       <div className="relative flex items-center">
         <input
-          id='password'
-          type={showPassword ? "text" : "password"}
+          id="password"
+          type="password"
           placeholder="Password"
           value={password}
-          onChange={e => setPassword(e.target.value)}
-          className="p-2 rounded border border-black w-full pr-10"
+          onChange={(e) => setPassword(e.target.value)}
+          className="p-2 rounded border border-black w-full"
           required
           disabled={!secureReady}
         />
-        <button
-          type="button"
-          tabIndex={-1}
-          className="absolute right-2 bg-transparent border-none cursor-pointer text-black opacity-70 hover:opacity-100"
-          onClick={() => setShowPassword((v) => !v)}
-          aria-label={showPassword ? "Hide password" : "Show password"}
-        >
-          {showPassword ? (
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664A9.956 9.956 0 0112 3c5.523 0 10 4.477 10 10 0 1.657-.403 3.221-1.125 4.575m-1.664 2.664A9.956 9.956 0 0112 21c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664L21 21" /></svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0zm-9.197 4.197A9.956 9.956 0 0112 3c5.523 0 10 4.477 10 10 0 1.657-.403 3.221-1.125 4.575m-1.664 2.664A9.956 9.956 0 0112 21c-5.523 0-10-4.477-10-10 0-1.657.403-3.221 1.125-4.575m1.664-2.664L21 21" /></svg>
-          )}
-        </button>
       </div>
       {error && <div className="text-red-700 text-xs">{error}</div>}
-      <button type="submit" className="bg-black text-yellow-400 p-2 rounded font-bold" disabled={loading || !secureReady}>
-        {loading ? "Logging in..." : !secureReady ? "Secure storage..." : "Login"}
+      <button
+        type="submit"
+        className="bg-black text-white p-2 rounded font-bold"
+        disabled={loading || !secureReady}>
+        {loading
+          ? "Logging in..."
+          : !secureReady
+            ? "Secure storage..."
+            : "Login"}
       </button>
       <div className="text-xs text-center mt-2">
-        <button type="button" className="underline text-black hover:text-yellow-700" onClick={onShowForgotPassword}>
+        <button
+          type="button"
+          className="underline text-black hover:text-yellow-700"
+          onClick={onShowForgotPassword}>
           Forgot password?
         </button>
       </div>
       <div className="text-xs text-center mt-2">
-        Don't have an account?{' '}
-        <button type="button" className="underline text-black hover:text-yellow-700" onClick={onShowRegister}>
+        Don't have an account?{" "}
+        <button
+          type="button"
+          className="underline text-black hover:text-yellow-700"
+          onClick={onShowRegister}>
           Register
         </button>
       </div>

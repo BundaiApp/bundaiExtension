@@ -59,6 +59,16 @@ function MainPage({ onOpenTabs }) {
   })
   const [showStyleEditor, setShowStyleEditor] = useState(false)
 
+  // Japanese Subtitle container styles state
+  const [subtitleContainerStyles, setSubtitleContainerStyles] = useState({
+    backgroundColor: "#000000",
+    textColor: "#ffffff",
+    fontSize: 32,
+    opacity: 0.9,
+    borderRadius: 8
+  })
+  const [showSubtitleStyleEditor, setShowSubtitleStyleEditor] = useState(false)
+
   const DROPLET_BASE_URL = "https://api.bundai.app"
 
   // Function to get current tab URL and extract video ID
@@ -362,6 +372,14 @@ function MainPage({ onOpenTabs }) {
         console.log("[MainPage] wordCardStyles:", value)
       }
     })
+
+    // Load Japanese Subtitle container styles
+    secureStorage.get("subtitleContainerStyles").then((value) => {
+      if (value && typeof value === "object") {
+        setSubtitleContainerStyles((prev) => ({ ...prev, ...value }))
+        console.log("[MainPage] subtitleContainerStyles:", value)
+      }
+    })
   }, [secureReady, secureStorage])
 
   // Get current video ID when component mounts and load cached subtitles
@@ -456,6 +474,61 @@ function MainPage({ onOpenTabs }) {
     )
   }
 
+  // Handle Japanese Subtitle container style changes
+  const handleSubtitleStyleChange = async (
+    styleKey: string,
+    value: string | number
+  ) => {
+    const newStyles = { ...subtitleContainerStyles, [styleKey]: value }
+    setSubtitleContainerStyles(newStyles)
+
+    await secureStorage.set("subtitleContainerStyles", newStyles)
+
+    // Notify background script
+    chrome.runtime.sendMessage(
+      {
+        action: "setSubtitleContainerStyles",
+        styles: newStyles
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error notifying background:", chrome.runtime.lastError)
+        } else {
+          console.log(
+            "[Popup] Background notified of subtitle container style change"
+          )
+        }
+      }
+    )
+  }
+
+  const resetSubtitleContainerStyles = async () => {
+    const defaultStyles = {
+      backgroundColor: "#000000",
+      textColor: "#ffffff",
+      fontSize: 32,
+      opacity: 0.9,
+      borderRadius: 8
+    }
+    setSubtitleContainerStyles(defaultStyles)
+    await secureStorage.set("subtitleContainerStyles", defaultStyles)
+
+    chrome.runtime.sendMessage(
+      {
+        action: "setSubtitleContainerStyles",
+        styles: defaultStyles
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "Error resetting subtitle styles:",
+            chrome.runtime.lastError
+          )
+        }
+      }
+    )
+  }
+
   const handleRefreshVideoId = async () => {
     const videoId = await getCurrentVideoId()
     if (videoId) {
@@ -540,13 +613,22 @@ function MainPage({ onOpenTabs }) {
               <span className="text-2xl">⚡</span>
               <div>
                 <p className="text-black font-bold text-sm">Settings Changed</p>
-                <p className="text-black text-xs">Please refresh the page</p>
+                <p className="text-black text-xs">Click to apply changes</p>
               </div>
             </div>
             <button
-              onClick={() => setShowRefreshMessage(false)}
-              className="text-black hover:text-gray-700 text-xl font-bold">
-              ✕
+              onClick={async () => {
+                const [tab] = await chrome.tabs.query({
+                  active: true,
+                  currentWindow: true
+                })
+                if (tab?.id) {
+                  chrome.tabs.reload(tab.id)
+                }
+                setShowRefreshMessage(false)
+              }}
+              className="bg-black text-white px-3 py-1 rounded font-bold text-sm hover:bg-gray-800">
+              Refresh
             </button>
           </div>
         </div>
@@ -735,6 +817,137 @@ function MainPage({ onOpenTabs }) {
               Use YouTube's native auto-generated subtitles
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Japanese Subtitle Container Styling Section */}
+      {enabled && (
+        <div className="bg-white bg-opacity-50 p-3 rounded border-2 border-black">
+          <div
+            className="flex items-center justify-between cursor-pointer"
+            onClick={() =>
+              setShowSubtitleStyleEditor(!showSubtitleStyleEditor)
+            }>
+            <h3 className="text-black font-bold">Japanese Subtitle Styling</h3>
+            <span className="text-xl font-bold">
+              {showSubtitleStyleEditor ? "▼" : "▶"}
+            </span>
+          </div>
+
+          {showSubtitleStyleEditor && (
+            <div className="mt-3 space-y-3">
+              {/* Background Color */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Background Color
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={subtitleContainerStyles.backgroundColor}
+                    onChange={(e) =>
+                      handleSubtitleStyleChange(
+                        "backgroundColor",
+                        e.target.value
+                      )
+                    }
+                    className="w-12 h-8 rounded cursor-pointer"
+                  />
+                  <span className="text-xs">
+                    {subtitleContainerStyles.backgroundColor}
+                  </span>
+                </div>
+              </div>
+
+              {/* Text Color */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Text Color
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={subtitleContainerStyles.textColor}
+                    onChange={(e) =>
+                      handleSubtitleStyleChange("textColor", e.target.value)
+                    }
+                    className="w-12 h-8 rounded cursor-pointer"
+                  />
+                  <span className="text-xs">
+                    {subtitleContainerStyles.textColor}
+                  </span>
+                </div>
+              </div>
+
+              {/* Font Size */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Font Size: {subtitleContainerStyles.fontSize}px
+                </label>
+                <input
+                  type="range"
+                  min="16"
+                  max="64"
+                  value={subtitleContainerStyles.fontSize}
+                  onChange={(e) =>
+                    handleSubtitleStyleChange(
+                      "fontSize",
+                      parseInt(e.target.value)
+                    )
+                  }
+                  className="w-full"
+                />
+              </div>
+
+              {/* Opacity */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Opacity: {(subtitleContainerStyles.opacity * 100).toFixed(0)}%
+                </label>
+                <input
+                  type="range"
+                  min="0.3"
+                  max="1"
+                  step="0.1"
+                  value={subtitleContainerStyles.opacity}
+                  onChange={(e) =>
+                    handleSubtitleStyleChange(
+                      "opacity",
+                      parseFloat(e.target.value)
+                    )
+                  }
+                  className="w-full"
+                />
+              </div>
+
+              {/* Border Radius */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Border Radius: {subtitleContainerStyles.borderRadius}px
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="24"
+                  value={subtitleContainerStyles.borderRadius}
+                  onChange={(e) =>
+                    handleSubtitleStyleChange(
+                      "borderRadius",
+                      parseInt(e.target.value)
+                    )
+                  }
+                  className="w-full"
+                />
+              </div>
+
+              {/* Reset Button */}
+              <button
+                onClick={resetSubtitleContainerStyles}
+                className="w-full px-3 py-2 bg-red-500 text-white rounded font-semibold hover:bg-red-600 text-sm">
+                Reset to Default
+              </button>
+            </div>
+          )}
         </div>
       )}
 
