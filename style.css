@@ -108,9 +108,20 @@
   }
 
   .bundai-custom-subtitle {
-    font-size: 18px !important;
-    padding: 6px 12px !important;
+    /* Allow inline styles to take precedence */
+    font-size: inherit !important;
+    padding: inherit !important;
   }
+}
+
+/* Fullscreen mode - allow inline styles to take precedence */
+.ytp-fullscreen .bundai-custom-subtitle {
+  font-size: inherit !important;
+  padding: inherit !important;
+  background-color: inherit !important;
+  color: inherit !important;
+  border-radius: inherit !important;
+  opacity: inherit !important;
 }
 
 /* High contrast mode support */

@@ -181,6 +181,37 @@ class CustomSubtitleContainer {
       this.loadWordCardStyles()
       this.loadSubtitleContainerStyles()
     }, 500)
+
+    // Listen for fullscreen changes to re-apply styles
+    document.addEventListener("fullscreenchange", () => {
+      this.reapplySubtitleStyles()
+    })
+    document.addEventListener("webkitfullscreenchange", () => {
+      this.reapplySubtitleStyles()
+    })
+  }
+
+  private reapplySubtitleStyles(): void {
+    if (this.subtitle1Element) {
+      this.applySubtitleStyles(this.subtitle1Element, {
+        backgroundColor:
+          this.subtitleContainerStyles.backgroundColor || "#000000",
+        color: this.subtitleContainerStyles.textColor || "#ffffff",
+        fontSize: this.subtitleContainerStyles.fontSize || 32,
+        opacity: this.subtitleContainerStyles.opacity || 0.9,
+        borderRadius: this.subtitleContainerStyles.borderRadius || 8
+      })
+    }
+    if (this.subtitle2Element) {
+      this.applySubtitleStyles(this.subtitle2Element, {
+        backgroundColor:
+          this.subtitleContainerStyles.backgroundColor || "#000000",
+        color: this.subtitleContainerStyles.textColor || "#ffffff",
+        fontSize: this.subtitleContainerStyles.fontSize || 32,
+        opacity: this.subtitleContainerStyles.opacity || 0.9,
+        borderRadius: this.subtitleContainerStyles.borderRadius || 8
+      })
+    }
   }
 
   private async loadWordCardStyles(): Promise<void> {
