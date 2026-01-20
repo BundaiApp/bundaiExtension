@@ -1,326 +1,467 @@
-# Bundai Extension Status
+# Bundai Extension - Complete History & Status
 
-## Overview
-
-A Chrome/Chromium browser extension for Japanese language learning. Features dual subtitle support for YouTube, universal text reader for any website, WordCard integration with asbplayer subtitles, and flashcard integration with Bundai app.
+## Last Updated: January 2025
 
 ---
 
-## Vision
+## Executive Summary
 
-The Bundai Extension aims to help Japanese learners learn from video content:
+A Chrome extension for Japanese language learning focused on YouTube video content. Uses a **custom subtitle container** that displays dual subtitles (Japanese + English) with **WordCard integration** for instant dictionary lookups and flashcard creation.
 
-1. **YouTube Dual Subtitles** ✅ (Active Priority)
-
-   - Show dual subtitle for YouTube using custom subtitle container
-   - Fetch automated subtitles via youtube-transcript-api (Python script at ~/projects/ytTranscript)
-   - Use Node.js server at ~/projects/server as bridge to Python script
-   - Use our custom WordCard for subtitle word lookups
-   - Support YouTube's native auto-generated subtitles
-   - **Future**: User upload support (from 10k subtitle list or kitsuneko)
-
-2. **Netflix & Crunchyroll Dual Subtitles** ❌ (Planned)
-
-   - Show dual subtitles similar to YouTube implementation
-   - Subtitle sources: (1) Download provided subs, (2) User uploads, (3) Generate on fly
-   - Create custom subtitle container and control video
-   - Word hover integration with WordCard
-   - **Status**: Planned after YouTube implementation is complete
-
-3. ~~Universal Reader~~ ❌ (Abandoned)
-
-   - ~~Reader mode for any Japanese text on the web~~
-   - ~~10Ten-like hover dictionary functionality~~
-   - ~~Works on any website (Twitter, news, blogs, etc.)~~
-   - **Status**: Feature abandoned - moved to kaiyes branch as separate project
+**Key Innovation**: Instead of using YouTube's native subtitle display or asbplayer, we render subtitles in our own custom container using subtitles fetched via **youtube-transcript-api** (Python library).
 
 ---
 
-## ✅ Completed Features
+## History & Experiments
+
+### Initial Vision (Early 2024)
+
+The original plan included multiple features:
+
+1. YouTube dual subtitles (using yt-dlp for subtitle fetching)
+2. Universal reader mode (10Ten-like, works on all websites)
+3. asbplayer integration (for non-YouTube sites)
+4. Netflix & Crunchyroll support
+
+### Experiment 1: kaiyes Branch (Universal Reader)
+
+**What we tried:**
+
+- Built a universal reader mode (`contents/japanese-reader.tsx`)
+- Worked on ALL websites using `<all_urls>` match pattern
+- Used Kuromoji for Japanese word tokenization
+- Showed WordCard on hover for any Japanese text
+
+**Result:**
+
+- Technically worked but was complex to maintain
+- Required too many permissions (`<all_urls>`)
+- Different UX than the subtitle-focused core feature
+
+**Decision:** Moved to `kaiyes` branch as a separate project. Main branch focuses solely on YouTube.
+
+### Experiment 2: asbplayer Integration
+
+**What we tried:**
+
+- Researched asbplayer's DOM structure
+- Planned to attach WordCard hover events to asbplayer's subtitle container
+- Would have enabled support for any site asbplayer supports
+
+**Result:**
+
+- Abandoned because asbplayer's implementation changed frequently
+- Added complexity without clear benefit
+- User would need to run asbplayer separately
+
+**Decision:** Skip asbplayer entirely. Instead, build our own subtitle rendering.
+
+### Experiment 3: yt-dlp vs youtube-transcript-api
+
+**yt-dlp approach:**
+
+- Used api.bundai.app/subtitles endpoint
+- Worked well for manual/user-uploaded subtitles
+- Required server-side yt-dlp installation
+
+**youtube-transcript-api approach:**
+
+- Python library that directly fetches YouTube auto-generated subtitles
+- Runs locally, no external dependencies
+- Simpler architecture
+
+**Decision:**
+
+- Use **youtube-transcript-api** for auto-generated subtitles (simple, local)
+- Keep **yt-dlp** for manual/user-uploaded subtitles (existing API, works well)
+- Both feed into our **custom container** for consistent UX
+
+---
+
+## Current Architecture
+
+### The Custom Container Approach
+
+Instead of using YouTube's native subtitles or asbplayer, we render subtitles in our own container:
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Bundai Custom Container                │
+├─────────────────────────────────────────────────────┤
+│  Japanese: こんにちは、世界！                      │  ← Custom styled
+│  English:  Hello, World!                           │  ← Dual subtitles
+├─────────────────────────────────────────────────────┤
+│         Tokenized Japanese words                    │
+│         [今日][世界][!]                            │
+│                  ↓                                  │
+│              WordCard on hover                      │
+└─────────────────────────────────────────────────────┘
+```
+
+**Benefits:**
+
+1. **Consistent UX** - Same behavior for all subtitle sources
+2. **Full control** - Styling, positioning, behavior
+3. **Better integration** - WordCard works seamlessly
+4. **Multi-line support** - Handles long subtitles properly
+
+### Architecture Diagram
+
+```
+User on YouTube
+      ↓
+Extension Popup (on/off toggle, mode selection)
+      ↓
+Content Script (custom-subtitles-container.tsx)
+      ↓
+┌─────────────────────────────────────────────┐
+│           SUBTITLE SOURCES                  │
+├─────────────────────────────────────────────┤
+│  1. Auto-Generated (youtube-transcript-api) │
+│     → Python script at ~/projects/ytTranscript
+│     → Called via ~/projects/server (GraphQL)
+│                                             │
+│  2. Manual/User-Uploaded (yt-dlp)           │
+│     → api.bundai.app/subtitles endpoint
+│     → For when video has official subtitles │
+│                                             │
+│  3. User Upload (Future)                    │
+│     → Upload VTT/SRT files directly
+│     → Parse and render in same container    │
+└─────────────────────────────────────────────┘
+      ↓
+Custom Container Display
+      ↓
+WordCard Popup (JMdict lookup)
+      ↓
+Flashcard Creation (Bundai GraphQL API)
+```
+
+---
+
+## Completed Features
 
 ### 1. Core Infrastructure
 
-- **Plasmo Framework**: Extension built with Plasmo (v0.90.5) for Chrome MV3 compatibility
-- **Authentication System**: Login, register, password reset, email verification via GraphQL API
-- **Background Script**: Centralized state management with persistent storage (extension enabled, mode selection, WordCard styles)
-- **Secure Storage**: Using `@plasmohq/storage/secure` for sensitive data (auth tokens, settings)
+| Component                   | Status | Notes                               |
+| --------------------------- | ------ | ----------------------------------- |
+| Plasmo Framework            | ✅     | v0.90.5, Chrome MV3                 |
+| Authentication              | ✅     | Login, register, email verification |
+| Background State Management | ✅     | Persistent storage for all settings |
+| Secure Storage              | ✅     | Tokens, sensitive data encrypted    |
 
 ### 2. Japanese Dictionary (JMdict)
 
-- **IndexedDB Storage**: Full JMdict database (~200k entries) stored locally
-- **Service Implementation** (`services/dictionaryDB.ts`):
-  - Batch loading with progress indicators
-  - Indexes by kanji and kana for fast lookups
-  - Random entry generation for quiz answers
-  - Database only loads once (persistent across sessions)
+| Component              | Status | Notes                                 |
+| ---------------------- | ------ | ------------------------------------- |
+| IndexedDB Storage      | ✅     | ~200k entries, loads once             |
+| Word Lookup            | ✅     | Fast kanji/kana indexing              |
+| Quiz Answer Generation | ✅     | 4 options (1 correct + 3 distractors) |
+| Loading Overlay        | ✅     | Progress indicator during DB load     |
 
-### 3. Universal Japanese Reader (10Ten-like)
+### 3. Custom Subtitle Container
 
-**File**: `contents/japanese-reader.tsx`
+| Feature               | Status | Notes                          |
+| --------------------- | ------ | ------------------------------ |
+| Dual Subtitles        | ✅     | JP top, EN bottom              |
+| VTT/SRT Parsing       | ✅     | Full format support            |
+| Real-time Sync        | ✅     | Video playback synchronization |
+| Tokenized Words       | ✅     | Each word clickable/hoverable  |
+| Video Pause on Hover  | ✅     | Convenient for reading         |
+| Multi-line Support    | ✅     | `white-space: pre-wrap`        |
+| Fullscreen Compatible | ✅     | Styles persist in fullscreen   |
 
-- Works on **ALL websites** (`<all_urls>` match pattern)
-- Kuromoji tokenization for word segmentation
-- Hover over Japanese text → show WordCard popup
-- Click to make card sticky
-- Lookup in local JMdict database
-- Romaji conversion via wanakana
-- Customizable WordCard styles
+### 4. WordCard Integration
 
-### 4. YouTube Dual Subtitle System (Custom Container)
+| Feature            | Status | Notes                           |
+| ------------------ | ------ | ------------------------------- |
+| Definition Display | ✅     | Word, kana, romaji, meanings    |
+| Custom Styling     | ✅     | Background, color, font, border |
+| Add to Flashcards  | ✅     | Auto-generates quiz answers     |
+| Sticky Mode        | ✅     | Click to pin card               |
 
-**File**: `contents/custom-subtitles-container.tsx`
+### 5. Popup UI
 
-#### Subtitle Rendering
+| Feature                    | Status | Notes                               |
+| -------------------------- | ------ | ----------------------------------- |
+| On/Off Toggle              | ✅     | Extension enable/disable            |
+| Mode Selection             | ✅     | API Subtitles vs Auto-Generated     |
+| WordCard Styling           | ✅     | Full customization                  |
+| Subtitle Container Styling | ✅     | Background, color, size, opacity    |
+| Retry Button               | ✅     | Quick fix for initialization issues |
+| Refresh Prompt             | ✅     | When settings change                |
 
-- Dual subtitle overlay (JP top, EN bottom)
-- VTT and SRT format parsing
-- Real-time sync with video playback
-- Tokenized Japanese words (clickable/hoverable)
-- Subtitle text pauses video on hover
+### 6. Auto-Generated Subtitles (youtube-transcript-api)
 
-#### Word Hover & Flashcards
-
-- Hover on tokenized words → show WordCard with definitions
-- Click to add to Bundai flashcards
-- Auto-generates quiz answers (3 distractors from dictionary)
-- GraphQL mutation to `https://api.bundai.app/graphql`
-
-### 5. Subtitle API Integration
-
-**File**: `hooks/useSubtitle.ts`, `popup/index.tsx`
-
-- Fetches from `https://api.bundai.app/subtitles/${videoId}?subtitle_format=vtt` (manual subtitles)
-- **NEW**: Python script at `~/projects/ytTranscript` using youtube-transcript-api for automated subtitles
-- Direct Python script calls from extension (no Node.js server for subtitles)
-- Local caching (24hr expiry, 3MB limit)
-- Auto-load saved subtitles on page navigation
-- Manual fetch button in popup
-
-### 6. Popup UI
-
-**File**: `popup/index.tsx`
-
-- Extension on/off toggle
-- Mode selection (API Subtitles vs Reader Mode)
-- Subtitle selection dropdown (when API mode active)
-- WordCard style editor (color, font size, border radius)
-- Current video/page info display
-- Refresh prompt after settings changes
-
-### 7. WordCard Component
-
-**File**: `components/WordCard.tsx`
-
-- Displays word, kana, romaji, meanings
-- Custom styling support (background, text, border, fonts)
-- Add to flashcards button with quiz generation
-- Success/error feedback
-- Close button
-
-### 8. Flashcard Service
-
-**File**: `hooks/useFlashcardService.ts`, `graphql/mutations/addFlashCard.mutation.ts`
-
-- Apollo GraphQL client integration
-- Auto-generates quiz answers (4 options: 1 correct + 3 random)
-- Source tracking (extension, app, etc.)
+| Feature               | Status | Notes                                              |
+| --------------------- | ------ | -------------------------------------------------- |
+| Python Script         | ✅     | ~/projects/ytTranscript/server.py                  |
+| GraphQL Integration   | ✅     | ~/projects/server/resolvers/Transcript.resolver.js |
+| VTT Output            | ✅     | WebVTT format for container                        |
+| Extension Integration | ✅     | Fetches on mode switch                             |
 
 ---
 
-## 🚧 In Progress / Current Priority
-
-### YouTube Transcript API Integration
-
-**Priority**: 1st (Main Goal)
-**Files**: `popup/index.tsx`, `hooks/useSubtitle.ts`, `~/projects/ytTranscript/`
-
-#### Requirements:
-
-1. **Replace yt-dlp with youtube-transcript-api**
-
-   - Modify `~/projects/ytTranscript/download.py` to output VTT format
-   - Extension calls Python script directly instead of api.bundai.app/subtitles
-   - Support both automated and manual subtitle fetching
-   - Get full transcript at once (not chunk by chunk)
-
-2. **Update extension to use Python script**
-
-   - Modify popup/index.tsx to call local Python endpoint
-   - Parse VTT output from youtube-transcript-api
-   - Maintain existing dual subtitle container functionality
-
-3. **Test with various videos**
-
-   - Test with Japanese auto-generated subtitles
-   - Test with English subtitles
-   - Verify timing and synchronization
-
----
-
-## 📋 TODO / Plan
-
-### Phase 1: YouTube Transcript API Integration ⚠️ CURRENT PRIORITY
-
-**Status**: In Progress
-**Required**:
-
-- [x] Review youtube-transcript-api capabilities
-- [x] Modify `~/projects/ytTranscript` to output VTT format
-- [x] Create Node.js endpoint in ~/projects/server to call Python script
-- [x] Update extension popup to fetch from GraphQL endpoint
-- [ ] Test full transcript fetch with extension
-- [ ] Verify VTT parsing in custom-subtitles-container.tsx
-
-### Phase 2: User Subtitle Upload (Future)
-
-**Status**: Planned
-**Required**:
-
-- Upload UI in popup for subtitle files (VTT/SRT)
-- Parse uploaded subtitle files
-- Store uploaded subtitles per video in Chrome storage
-- Integrate with existing dual subtitle system
-- Fetch subtitles from 10k subtitle list or kitsuneko website
-
-### Phase 3: Netflix & Crunchyroll Support (Future)
-
-**Status**: Not Started
-**Required**:
-
-- Subtitle source options: (1) Download provided subs, (2) User uploads, (3) Generate on fly
-- Create platform adapters for Netflix and Crunchyroll
-- Implement dual subtitle container for both platforms
-- Word hover integration with WordCard
-- Video control (pause/play on subtitle hover)
-
-### ~~Abandoned Features~~
-
-- ~~asbplayer integration~~ (abandoned)
-- ~~Universal Reader Mode~~ (abandoned - moved to separate project in kaiyes branch)
-
----
-
-## 🗂️ File Structure
+## File Structure
 
 ```
 bundaiExtension/
 ├── assets/
 │   └── data/japanese/
-│       └── jmdict-simplified-flat-full.json    # Dictionary data
+│       └── jmdict-simplified-flat-full.json    # 200k+ dictionary entries
 ├── components/
-│   ├── DictionaryLoadingOverlay.tsx           # Loading indicator
+│   ├── DictionaryLoadingOverlay.tsx            # DB load progress
 │   ├── PageLayout.tsx                          # Tab page layout
-│   ├── SubtitlesSection.tsx                    # Subtitle dropdown UI
-│   └── WordCard.tsx                           # Definition popup
+│   ├── SubtitlesSection.tsx                    # Subtitle selection UI
+│   └── WordCard.tsx                            # Definition popup
 ├── contents/
-│   ├── japanese-reader.tsx                     # Universal reader (all sites) 🚧 Needs asbplayer support
-│   └── custom-subtitles-container.tsx         # YouTube dual subs (custom container)
+│   ├── custom-subtitles-container.tsx          # MAIN: Custom container
+│   └── japanese-reader.tsx                     # Moved to kaiyes branch
 ├── graphql/
 │   └── mutations/
 │       ├── addFlashCard.mutation.ts
 │       ├── logIn.mutation.ts
-│       ├── signUp.mutation.ts
-│       ├── forgetPassword.mutation.ts
-│       ├── resendVerification.mutation.ts
-│       └── verification.mutation.ts
+│       └── ...
 ├── hooks/
-│   ├── useFlashcardService.ts                  # Flashcard GraphQL
-│   └── useSubtitle.ts                          # Subtitle API hook
+│   ├── useFlashcardService.ts
+│   └── useSubtitle.ts
 ├── popup/
 │   ├── index.tsx                               # Main popup UI
 │   ├── login.tsx
-│   ├── register.tsx
-│   ├── forgotPassword.tsx
-│   └── verification.tsx
+│   └── ...
 ├── services/
-│   └── dictionaryDB.ts                         # IndexedDB JMdict
+│   └── dictionaryDB.ts                         # IndexedDB operations
 ├── tabs/
-│   ├── auth.tsx                                # Auth tab page
-│   └── delta-flyer.tsx
-├── utils/
-│   └── secure-storage.ts
-├── background.ts                               # State management, flashcard handler
-└── options.tsx                                 # Extension options page
+│   └── auth.tsx                                # Auth page (tabs/)
+├── background.ts                               # State management
+└── style.css                                   # Container styles
+
+~/projects/server/                              # Node.js GraphQL server
+├── resolvers/
+│   ├── Transcript.resolver.js                  # Calls ytTranscript
+│   └── ManualSubtitles.resolver.js             # Calls api.bundai.app
+├── typeDefs.js                                 # GraphQL schema
+└── index.js
+
+~/projects/ytTranscript/                        # Python subtitle fetcher
+├── server.py                                   # Main script (VTT output)
+└── download.py                                 # CLI version
 ```
 
 ---
 
-## 🔧 Key Technologies
+## Key Technologies
 
-- **Framework**: Plasmo 0.90.5 (React-based extension framework)
-- **Language**: TypeScript 5.3.3
-- **Styling**: Tailwind CSS + PostCSS
-- **Dictionary**: IndexedDB (JMdict)
-- **Japanese NLP**: kuromoji (tokenization), wanakana (romaji)
-- **API**: GraphQL (@apollo/client)
-- **Storage**: @plasmohq/storage (chrome.storage wrapper)
-- **Subtitle Backend**: Python youtube-transcript-api at ~/projects/ytTranscript (NEW)
-
----
-
-## 🌐 API Endpoints Used
-
-| Endpoint                                      | Purpose                                                        |
-| --------------------------------------------- | -------------------------------------------------------------- |
-| `https://api.bundai.app/graphql`              | GraphQL for auth, flashcards                                   |
-| `~/projects/ytTranscript`                     | Python script for automated subtitles (youtube-transcript-api) |
-| `https://api.bundai.app/subtitles/${videoId}` | Fetch manual subtitle URLs (VTT) - kept for future             |
+| Category          | Technology             | Purpose                      |
+| ----------------- | ---------------------- | ---------------------------- |
+| Framework         | Plasmo 0.90.5          | Chrome extension build       |
+| Language          | TypeScript 5.3.3       | Type-safe development        |
+| Styling           | Tailwind CSS + PostCSS | UI styling                   |
+| Dictionary        | IndexedDB (JMdict)     | Local word lookup            |
+| Japanese NLP      | kuromoji               | Word tokenization            |
+| Japanese NLP      | wanakana               | Romaji conversion            |
+| GraphQL           | Apollo Client          | API communication            |
+| Storage           | @plasmohq/storage      | Chrome storage wrapper       |
+| Subtitle Fetching | youtube-transcript-api | Python library for auto-subs |
 
 ---
 
-## ⚙️ Configuration
+## API Endpoints
+
+| Endpoint                                      | Purpose             | Status        |
+| --------------------------------------------- | ------------------- | ------------- |
+| `https://api.bundai.app/graphql`              | Auth, flashcards    | ✅ Production |
+| `~/projects/ytTranscript/server.py`           | Auto-generated subs | ⚠️ Local dev  |
+| `https://api.bundai.app/subtitles/${videoId}` | Manual/user subs    | ✅ Production |
+
+---
+
+## Configuration
 
 ### Manifest Permissions
 
 - `activeTab`, `storage`, `tabs`, `cookies`
-- Host permissions: `*://*.youtube.com/*`, `http://localhost:*/*`, `https://api.bundai.app/*`
+- Host permissions: YouTube, localhost (dev), api.bundai.app
 
-### Web Accessible Resources
+### Environment Variables
 
-- `tabs/*`, `node_modules/kuromoji/dict/*.dat.gz`, `assets/data/japanese/jmdict-simplified-flat-full.json`
-
----
-
-## 📝 Mode Logic
-
-**Two Modes:**
-
-1. **API Subtitles** (`useAutoGeneratedSubtitles = false`)
-
-   - Uses `custom-subtitles-container.tsx`
-   - Fetches subtitles from Python script (youtube-transcript-api)
-   - Dual subtitle overlay (custom container)
-   - Tokenized Japanese with word hover
-   - Pause video on hover (custom container only)
-
-2. **Auto-Generated** (`useAutoGeneratedSubtitles = true`)
-
-   - Uses YouTube's native subtitle display
-   - No custom overlay
-   - WordCard integration on YouTube's subtitle elements
-   - Leverages YouTube's auto-generated subtitles directly
-
-**Platform Logic:**
-
-- **YouTube**: Can use API Subtitles OR Auto-Generated mode
-- **Netflix/Crunchyroll**: Planned for future (same approach: download, upload, or generate subs)
-- **Non-YouTube**: Extension disabled (YouTube-only feature for now)
+- `PLASMO_SECURE_STORAGE_PASSWORD` - For encrypted storage
 
 ---
 
-## 🐛 Known Issues
+## Mode Logic
 
-1. YouTube page navigation sometimes requires refresh after mode changes (UI shows prompt)
-2. Dictionary initial load shows overlay (large JSON ~10-50MB)
-3. Auto-generated mode WordCard integration needs implementation
+### Extension Modes
+
+| Mode               | When to Use                         | Behavior                                                    |
+| ------------------ | ----------------------------------- | ----------------------------------------------------------- |
+| **API Subtitles**  | Video has manual/official subtitles | Fetch from yt-dlp, display in custom container              |
+| **Auto-Generated** | Only YouTube's auto-subs available  | Fetch via youtube-transcript-api, display in same container |
+
+**Key Point:** Both modes use the SAME custom container. No mode-specific logic in display layer.
+
+### Platform Support
+
+| Platform    | Status         | Approach                                  |
+| ----------- | -------------- | ----------------------------------------- |
+| YouTube     | ✅ Active      | Custom container + youtube-transcript-api |
+| Netflix     | 📋 Planned     | Same approach (download/upload/generate)  |
+| Crunchyroll | 📋 Planned     | Same approach (download/upload/generate)  |
+| Other Sites | ❌ Not planned | Focus on YouTube first                    |
 
 ---
 
-## 🎯 Next Priority
+## Current Issues & Solutions
 
-1. **Test transcript fetching** - Verify extension fetches from GraphQL endpoint correctly
-2. **Test VTT parsing** - Verify custom-subtitles-container.tsx parses VTT properly
-3. **Test with various videos** - Ensure Japanese and English subtitles work correctly
-4. **User subtitle upload UI** - Add ability to upload VTT/SRT files for videos
-5. **Auto-generated mode integration** - Add WordCard to YouTube's native subtitles (future)
-6. **Netflix & Crunchyroll support** - Implement after YouTube is complete
+### Issue 1: Initialization Delays
+
+**Problem:** Sometimes extension doesn't show on first load.
+
+**Solutions Implemented:**
+
+- Retry button in popup (toggles off/on + refresh)
+- Check Status button for diagnostics
+- Fullscreen change listener re-applies styles
+
+### Issue 2: Fullscreen Styling
+
+**Problem:** Custom styles reverted in fullscreen mode.
+
+**Solution:**
+
+- Added `fullscreenchange` event listener
+- CSS now allows inline styles to override
+- `reapplySubtitleStyles()` method called on fullscreen toggle
+
+### Issue 3: Multi-line Subtitles
+
+**Problem:** Long subtitles were cut off.
+
+**Solution:**
+
+- Added `white-space: pre-wrap` to container
+- Increased line-height for readability
+
+---
+
+## Future Plans
+
+### Priority 1: User Uploaded Subtitles
+
+Allow users to upload subtitles directly:
+
+- [ ] Upload UI in popup (drag & drop or file picker)
+- [ ] Parse VTT/SRT files
+- [ ] Store in Chrome storage per video
+- [ ] Integrate with existing container
+- [ ] Source options: local file, 10k subtitle list, kitsuneko
+
+### Priority 2: Netflix & Crunchyroll
+
+Same approach as YouTube:
+
+- Download provided subtitles, OR
+- User upload, OR
+- Generate on fly (future)
+
+### Priority 3: Performance
+
+- Lazy load dictionary (currently loads ~10-50MB on init)
+- Better caching strategy
+- Background prefetching
+
+---
+
+## Development Setup
+
+### Local Development
+
+```bash
+# Extension
+cd ~/projects/bundaiExtension
+npm run dev     # Development build
+npm run build   # Production build
+
+# Server
+cd ~/projects/server
+npm run dev     # GraphQL server on localhost:3000
+
+# Python Script
+cd ~/projects/ytTranscript
+python3 server.py 5000  # Standalone server (optional)
+```
+
+### Production Deployment
+
+```bash
+# 1. Upload ~/projects/ytTranscript to server
+# 2. Install dependencies: pip install youtube-transcript-api
+# 3. Deploy ~/projects/server to Digital Ocean
+# 4. Update extension's graphql/index.ts to use production URL
+# 5. Rebuild extension
+```
+
+---
+
+## Known Issues
+
+1. **Page refresh needed** after some setting changes (handled with UI prompt)
+2. **Dictionary load overlay** shows on first use (expected behavior)
+3. **Retry button** occasionally needed for stubborn initialization
+
+---
+
+## Lessons Learned
+
+1. **Custom container > Native YouTube subs**
+
+   - Full control over styling and behavior
+   - Consistent UX across all subtitle sources
+   - Easier debugging
+
+2. **youtube-transcript-api > yt-dlp for auto-subs**
+
+   - Simpler architecture (local Python script)
+   - No external dependencies
+   - Faster for auto-generated content
+
+3. **Single container approach > Multiple modes**
+
+   - Don't maintain separate rendering logic
+   - Feed different sources into same display layer
+   - Easier to maintain and extend
+
+4. **Focus beats breadth**
+   - Universal reader moved to separate project
+   - asbplayer integration abandoned
+   - Focus on YouTube + quality over quantity
+
+---
+
+## Quick Reference
+
+| Question                      | Answer                                              |
+| ----------------------------- | --------------------------------------------------- |
+| Where are subtitles rendered? | Custom container (`custom-subtitles-container.tsx`) |
+| How are auto-subs fetched?    | youtube-transcript-api via ~/projects/ytTranscript  |
+| How to add subtitles?         | Toggle extension, select mode, click "Fetch"        |
+| How to style subtitles?       | Japanese Subtitle Styling section in popup          |
+| Why no asbplayer?             | Too complex, inconsistent, added no value           |
+| Why no universal reader?      | Moved to kaiyes branch, different use case          |
+| What's next?                  | User uploaded subtitles, then Netflix/Crunchyroll   |
+
+---
+
+## For New Development Sessions
+
+Start by reading:
+
+1. This STATUS.md file
+2. `popup/index.tsx` for current UI
+3. `contents/custom-subtitles-container.tsx` for rendering logic
+4. `background.ts` for state management
+
+Key branches:
+
+- `master` - Current development (YouTube focused)
+- `kaiyes` - Universal reader experiment (separate project)

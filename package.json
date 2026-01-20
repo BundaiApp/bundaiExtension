@@ -1,6 +1,6 @@
 {
   "name": "bundai-extension-plasmo",
-  "displayName": "Bundai extension plasmo",
+  "displayName": "Bundai-Japanese Anime Dual Subtitle Loader",
   "version": "0.0.1",
   "description": "A Japanese language learning, chromium based web extension",
   "author": "bundai",
@@ -45,8 +45,8 @@
       "https://api.bundai.app/*"
     ],
     "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
-  },
+      "extension_pages": "script-src 'self'; object-src 'self'"
+    },
     "web_accessible_resources": [
       {
         "resources": [

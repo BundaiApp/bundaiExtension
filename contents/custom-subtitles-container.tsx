@@ -1127,6 +1127,17 @@ class CustomSubtitleContainer {
           return true
         }
 
+        if (message.action === "checkStatus") {
+          console.log("[Custom Subtitles] Status check requested")
+          const hasContainer = !!document.getElementById("bundai-subtitle-root")
+          sendResponse({
+            isEnabled: this.isEnabled,
+            hasContainer: hasContainer,
+            videoElement: !!this.videoElement
+          })
+          return true
+        }
+
         if (message.action === "setWordCardStyles") {
           console.log(
             "[Custom Subtitles] Processing setWordCardStyles:",
@@ -1460,6 +1471,19 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
           message.styles || {}
       }
       sendResponse({ success: true })
+      return true
+    }
+
+    if (message.action === "checkStatus") {
+      console.log("[Custom Subtitles Global] Status check requested")
+      const hasContainer = !!document.getElementById("bundai-subtitle-root")
+      sendResponse({
+        isEnabled: (subtitleContainer as any)?.isEnabled || false,
+        hasContainer: hasContainer,
+        videoElement: !!(
+          subtitleContainer && (subtitleContainer as any).videoElement
+        )
+      })
       return true
     }
   })

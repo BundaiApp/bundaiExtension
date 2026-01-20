@@ -592,6 +592,72 @@ function MainPage({ onOpenTabs }) {
         <span className="text-black font-medium opacity-80">Enabled</span>
       </div>
 
+      {/* Retry Button */}
+      <div className="flex items-center gap-2 mt-2">
+        <button
+          onClick={async () => {
+            // Toggle off
+            setEnabled(false)
+            await secureStorage.set("extensionEnabled", false)
+            await notifyExtensionToggle(false)
+            // Toggle back on after short delay
+            setTimeout(async () => {
+              setEnabled(true)
+              await secureStorage.set("extensionEnabled", true)
+              await notifyExtensionToggle(true)
+              // Refresh page to reinitialize
+              const [tab] = await chrome.tabs.query({
+                active: true,
+                currentWindow: true
+              })
+              if (tab?.id) {
+                chrome.tabs.reload(tab.id)
+              }
+            }, 300)
+          }}
+          className="px-3 py-1 bg-blue-500 text-white text-sm rounded font-semibold hover:bg-blue-600">
+          Retry
+        </button>
+        <span className="text-xs text-gray-600">
+          Click if subtitles don't appear
+        </span>
+      </div>
+
+      {/* Status Indicator */}
+      {enabled && isYouTubePage && (
+        <div className="mt-2 p-2 bg-white bg-opacity-50 rounded">
+          <button
+            onClick={async () => {
+              const [tab] = await chrome.tabs.query({
+                active: true,
+                currentWindow: true
+              })
+              if (tab?.id) {
+                chrome.tabs.sendMessage(
+                  tab.id,
+                  { action: "checkStatus" },
+                  (response) => {
+                    if (chrome.runtime.lastError) {
+                      alert("Extension not responding. Click Retry to reload.")
+                    } else if (response?.isEnabled) {
+                      alert(
+                        "Extension is working! If subtitles don't appear, try refreshing the page."
+                      )
+                    } else {
+                      alert(
+                        "Extension is enabled but container is not showing. Click Retry."
+                      )
+                    }
+                  }
+                )
+              }
+            }}
+            className="text-xs text-blue-600 underline hover:text-blue-800">
+            Check Status
+          </button>
+        </div>
+      )}
+
       <div className="text-black text-sm mt-2">
         The extension is{" "}
         <span
