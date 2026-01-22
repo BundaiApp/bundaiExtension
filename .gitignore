@@ -27,8 +27,7 @@ yarn-error.log*
 out/
 build/
 dist/
-
-# plasmo
+chrome-*/
 .plasmo
 
 # typescript
