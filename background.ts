@@ -28,6 +28,7 @@ interface SubtitleContainerStyles {
   fontSize: number
   opacity: number
   borderRadius: number
+  verticalPosition: number
 }
 
 interface ExtensionState {
@@ -49,9 +50,10 @@ const defaultWordCardStyles: WordCardStyles = {
 const defaultSubtitleContainerStyles: SubtitleContainerStyles = {
   backgroundColor: "#000000",
   textColor: "#ffffff",
-  fontSize: 32,
+  fontSize: 50,
   opacity: 0.9,
-  borderRadius: 8
+  borderRadius: 8,
+  verticalPosition: 10
 }
 
 let extensionState: ExtensionState = {

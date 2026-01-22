@@ -61,6 +61,7 @@ interface SubtitleContainerStyles {
   fontSize?: number
   opacity?: number
   borderRadius?: number
+  verticalPosition?: number
 }
 
 interface Token {
@@ -269,7 +270,7 @@ class CustomSubtitleContainer {
             backgroundColor:
               this.subtitleContainerStyles.backgroundColor || "#000000",
             color: this.subtitleContainerStyles.textColor || "#ffffff",
-            fontSize: this.subtitleContainerStyles.fontSize || 32,
+            fontSize: this.subtitleContainerStyles.fontSize || 50,
             opacity: this.subtitleContainerStyles.opacity || 0.9,
             borderRadius: this.subtitleContainerStyles.borderRadius || 8
           })
@@ -279,10 +280,17 @@ class CustomSubtitleContainer {
             backgroundColor:
               this.subtitleContainerStyles.backgroundColor || "#000000",
             color: this.subtitleContainerStyles.textColor || "#ffffff",
-            fontSize: this.subtitleContainerStyles.fontSize || 32,
+            fontSize: this.subtitleContainerStyles.fontSize || 50,
             opacity: this.subtitleContainerStyles.opacity || 0.9,
             borderRadius: this.subtitleContainerStyles.borderRadius || 8
           })
+        }
+
+        // Set vertical position
+        if (this.subtitleContainer) {
+          const verticalPos =
+            this.subtitleContainerStyles.verticalPosition ?? 10
+          this.subtitleContainer.style.bottom = `${verticalPos}%`
         }
       }
     } catch (error) {
@@ -539,10 +547,12 @@ class CustomSubtitleContainer {
     this.subtitleContainer = document.createElement("div")
     this.subtitleContainer.id = "bundai-subtitle-root"
     this.subtitleContainer.className = "custom-subtitle-container"
+    const verticalPos =
+      this.subtitleContainerStyles.verticalPosition ?? this.settings.position
     this.subtitleContainer.style.cssText = `
       position: fixed;
       left: 50%;
-      bottom: ${this.settings.position}%;
+      bottom: ${verticalPos}%;
       transform: translateX(-50%);
       z-index: 9999;
       display: flex;
@@ -910,7 +920,9 @@ class CustomSubtitleContainer {
     this.settings = { ...this.settings, ...newSettings }
 
     if (this.subtitleContainer && this.isEnabled) {
-      this.subtitleContainer.style.bottom = `${this.settings.position}%`
+      const verticalPos =
+        this.subtitleContainerStyles.verticalPosition ?? this.settings.position
+      this.subtitleContainer.style.bottom = `${verticalPos}%`
       this.subtitleContainer.style.gap = `${this.settings.gap}px`
     }
 
@@ -1172,10 +1184,17 @@ class CustomSubtitleContainer {
               backgroundColor:
                 this.subtitleContainerStyles.backgroundColor || "#000000",
               color: this.subtitleContainerStyles.textColor || "#ffffff",
-              fontSize: this.subtitleContainerStyles.fontSize || 32,
+              fontSize: this.subtitleContainerStyles.fontSize || 50,
               opacity: this.subtitleContainerStyles.opacity || 0.9,
               borderRadius: this.subtitleContainerStyles.borderRadius || 8
             })
+          }
+
+          // Update vertical position
+          if (this.subtitleContainer) {
+            const verticalPos =
+              this.subtitleContainerStyles.verticalPosition ?? 10
+            this.subtitleContainer.style.bottom = `${verticalPos}%`
           }
 
           sendResponse({ success: true })

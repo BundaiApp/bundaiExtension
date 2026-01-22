@@ -63,9 +63,10 @@ function MainPage({ onOpenTabs }) {
   const [subtitleContainerStyles, setSubtitleContainerStyles] = useState({
     backgroundColor: "#000000",
     textColor: "#ffffff",
-    fontSize: 32,
+    fontSize: 50,
     opacity: 0.9,
-    borderRadius: 8
+    borderRadius: 8,
+    verticalPosition: 10
   })
   const [showSubtitleStyleEditor, setShowSubtitleStyleEditor] = useState(false)
 
@@ -506,9 +507,10 @@ function MainPage({ onOpenTabs }) {
     const defaultStyles = {
       backgroundColor: "#000000",
       textColor: "#ffffff",
-      fontSize: 32,
+      fontSize: 50,
       opacity: 0.9,
-      borderRadius: 8
+      borderRadius: 8,
+      verticalPosition: 10
     }
     setSubtitleContainerStyles(defaultStyles)
     await secureStorage.set("subtitleContainerStyles", defaultStyles)
@@ -527,13 +529,6 @@ function MainPage({ onOpenTabs }) {
         }
       }
     )
-  }
-
-  const handleRefreshVideoId = async () => {
-    const videoId = await getCurrentVideoId()
-    if (videoId) {
-      await loadCachedSubtitles(videoId)
-    }
   }
 
   const handleFetchSubtitles = async () => {
@@ -568,11 +563,6 @@ function MainPage({ onOpenTabs }) {
         ) : (
           <div className="text-orange-600 mt-1">Not a YouTube page</div>
         )}
-        <button
-          onClick={handleRefreshVideoId}
-          className="mt-1 px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600">
-          Refresh
-        </button>
       </div>
 
       {/* Extension Enable/Disable Toggle */}
@@ -592,7 +582,7 @@ function MainPage({ onOpenTabs }) {
         <span className="text-black font-medium opacity-80">Enabled</span>
       </div>
 
-      {/* Retry Button */}
+      {/* Retry & Refresh Buttons */}
       <div className="flex items-center gap-2 mt-2">
         <button
           onClick={async () => {
@@ -605,58 +595,25 @@ function MainPage({ onOpenTabs }) {
               setEnabled(true)
               await secureStorage.set("extensionEnabled", true)
               await notifyExtensionToggle(true)
-              // Refresh page to reinitialize
-              const [tab] = await chrome.tabs.query({
-                active: true,
-                currentWindow: true
-              })
-              if (tab?.id) {
-                chrome.tabs.reload(tab.id)
-              }
             }, 300)
           }}
           className="px-3 py-1 bg-blue-500 text-white text-sm rounded font-semibold hover:bg-blue-600">
           Retry
         </button>
-        <span className="text-xs text-gray-600">
-          Click if subtitles don't appear
-        </span>
+        <button
+          onClick={async () => {
+            const [tab] = await chrome.tabs.query({
+              active: true,
+              currentWindow: true
+            })
+            if (tab?.id) {
+              chrome.tabs.reload(tab.id)
+            }
+          }}
+          className="px-3 py-1 bg-gray-500 text-white text-sm rounded font-semibold hover:bg-gray-600">
+          Refresh Page
+        </button>
       </div>
-
-      {/* Status Indicator */}
-      {enabled && isYouTubePage && (
-        <div className="mt-2 p-2 bg-white bg-opacity-50 rounded">
-          <button
-            onClick={async () => {
-              const [tab] = await chrome.tabs.query({
-                active: true,
-                currentWindow: true
-              })
-              if (tab?.id) {
-                chrome.tabs.sendMessage(
-                  tab.id,
-                  { action: "checkStatus" },
-                  (response) => {
-                    if (chrome.runtime.lastError) {
-                      alert("Extension not responding. Click Retry to reload.")
-                    } else if (response?.isEnabled) {
-                      alert(
-                        "Extension is working! If subtitles don't appear, try refreshing the page."
-                      )
-                    } else {
-                      alert(
-                        "Extension is enabled but container is not showing. Click Retry."
-                      )
-                    }
-                  }
-                )
-              }
-            }}
-            className="text-xs text-blue-600 underline hover:text-blue-800">
-            Check Status
-          </button>
-        </div>
-      )}
 
       <div className="text-black text-sm mt-2">
         The extension is{" "}
@@ -670,35 +627,6 @@ function MainPage({ onOpenTabs }) {
         </span>
         .
       </div>
-
-      {/* Refresh Message */}
-      {showRefreshMessage && enabled && isYouTubePage && (
-        <div className="bg-yellow-300 p-3 rounded border-2 border-black mb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">⚡</span>
-              <div>
-                <p className="text-black font-bold text-sm">Settings Changed</p>
-                <p className="text-black text-xs">Click to apply changes</p>
-              </div>
-            </div>
-            <button
-              onClick={async () => {
-                const [tab] = await chrome.tabs.query({
-                  active: true,
-                  currentWindow: true
-                })
-                if (tab?.id) {
-                  chrome.tabs.reload(tab.id)
-                }
-                setShowRefreshMessage(false)
-              }}
-              className="bg-black text-white px-3 py-1 rounded font-bold text-sm hover:bg-gray-800">
-              Refresh
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* WordCard Styling Section */}
       {enabled && (
@@ -793,39 +721,19 @@ function MainPage({ onOpenTabs }) {
                 />
               </div>
 
-              {/* Content Font Size */}
+              {/* Vertical Position */}
               <div>
                 <label className="text-xs font-semibold block mb-1">
-                  Content Size: {wordCardStyles.fontSize}px
+                  Vertical Position: {subtitleContainerStyles.verticalPosition}%
                 </label>
                 <input
                   type="range"
-                  min="12"
-                  max="28"
-                  value={wordCardStyles.fontSize}
+                  min="1"
+                  max="30"
+                  value={subtitleContainerStyles.verticalPosition}
                   onChange={(e) =>
-                    handleWordCardStyleChange(
-                      "fontSize",
-                      parseInt(e.target.value)
-                    )
-                  }
-                  className="w-full"
-                />
-              </div>
-
-              {/* Border Radius */}
-              <div>
-                <label className="text-xs font-semibold block mb-1">
-                  Border Radius: {wordCardStyles.borderRadius}px
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="48"
-                  value={wordCardStyles.borderRadius}
-                  onChange={(e) =>
-                    handleWordCardStyleChange(
-                      "borderRadius",
+                    handleSubtitleStyleChange(
+                      "verticalPosition",
                       parseInt(e.target.value)
                     )
                   }
