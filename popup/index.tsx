@@ -721,26 +721,6 @@ function MainPage({ onOpenTabs }) {
                 />
               </div>
 
-              {/* Vertical Position */}
-              <div>
-                <label className="text-xs font-semibold block mb-1">
-                  Vertical Position: {subtitleContainerStyles.verticalPosition}%
-                </label>
-                <input
-                  type="range"
-                  min="1"
-                  max="30"
-                  value={subtitleContainerStyles.verticalPosition}
-                  onChange={(e) =>
-                    handleSubtitleStyleChange(
-                      "verticalPosition",
-                      parseInt(e.target.value)
-                    )
-                  }
-                  className="w-full"
-                />
-              </div>
-
               {/* Reset Button */}
               <button
                 onClick={resetWordCardStyles}
@@ -907,6 +887,26 @@ function MainPage({ onOpenTabs }) {
                   onChange={(e) =>
                     handleSubtitleStyleChange(
                       "borderRadius",
+                      parseInt(e.target.value)
+                    )
+                  }
+                  className="w-full"
+                />
+              </div>
+
+              {/* Vertical Position */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Vertical Position: {subtitleContainerStyles.verticalPosition}%
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="30"
+                  value={subtitleContainerStyles.verticalPosition}
+                  onChange={(e) =>
+                    handleSubtitleStyleChange(
+                      "verticalPosition",
                       parseInt(e.target.value)
                     )
                   }
