@@ -25,8 +25,11 @@
 }
 
 /* Main container */
-.bundai-custom-subtitle-container {
+.bundai-custom-subtitle-container,
+.custom-subtitle-container {
   position: fixed !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
   z-index: 2147483646 !important;
   pointer-events: auto !important;
   display: flex !important;
@@ -95,8 +98,8 @@
 }
 
 /* Hide our elements when YouTube is in fullscreen if needed */
-.ytp-fullscreen .bundai-custom-subtitle-container {
-  /* Adjust positioning for fullscreen if needed */
+.ytp-fullscreen .custom-subtitle-container {
+  /* Adjust positioning for fullscreen if needed - inline style will take precedence */
   bottom: 10% !important;
 }
 

@@ -177,13 +177,10 @@ class CustomSubtitleContainer {
     this.initializeJapanese()
     this.requestInitialState()
     this.setupAutoSubtitleListener()
-    // Delay style loading to ensure background is ready
     setTimeout(() => {
-      this.loadWordCardStyles()
-      this.loadSubtitleContainerStyles()
+      this.loadAllSettings()
     }, 500)
 
-    // Listen for fullscreen changes to re-apply styles
     document.addEventListener("fullscreenchange", () => {
       this.reapplySubtitleStyles()
     })
@@ -264,7 +261,8 @@ class CustomSubtitleContainer {
           "[Custom Subtitles] Loaded subtitle container styles:",
           this.subtitleContainerStyles
         )
-        // Re-apply styles to subtitle elements
+
+        // Apply styles to subtitle elements
         if (this.subtitle1Element) {
           this.applySubtitleStyles(this.subtitle1Element, {
             backgroundColor:
@@ -286,10 +284,11 @@ class CustomSubtitleContainer {
           })
         }
 
-        // Set vertical position
+        // Set vertical position if container exists
         if (this.subtitleContainer) {
           const verticalPos =
-            this.subtitleContainerStyles.verticalPosition ?? 10
+            this.subtitleContainerStyles.verticalPosition ??
+            this.settings.position
           this.subtitleContainer.style.bottom = `${verticalPos}%`
         }
       }
@@ -299,6 +298,13 @@ class CustomSubtitleContainer {
         error
       )
     }
+  }
+
+  private async loadAllSettings(): Promise<void> {
+    await Promise.all([
+      this.loadWordCardStyles(),
+      this.loadSubtitleContainerStyles()
+    ])
   }
 
   /**
@@ -552,8 +558,8 @@ class CustomSubtitleContainer {
     this.subtitleContainer.style.cssText = `
       position: fixed;
       left: 50%;
-      bottom: ${verticalPos}%;
       transform: translateX(-50%);
+      bottom: ${verticalPos}%;
       z-index: 9999;
       display: flex;
       flex-direction: column;
@@ -1193,7 +1199,8 @@ class CustomSubtitleContainer {
           // Update vertical position
           if (this.subtitleContainer) {
             const verticalPos =
-              this.subtitleContainerStyles.verticalPosition ?? 10
+              this.subtitleContainerStyles.verticalPosition ??
+              this.settings.position
             this.subtitleContainer.style.bottom = `${verticalPos}%`
           }
 
