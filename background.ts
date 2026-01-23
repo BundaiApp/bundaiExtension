@@ -159,6 +159,16 @@ async function broadcastStateToYouTubeTabs() {
         .catch(() => {
           // Content script might not be loaded yet, ignore
         })
+
+      // Send subtitleContainerStyles
+      chrome.tabs
+        .sendMessage(tab.id, {
+          action: "setSubtitleContainerStyles",
+          styles: extensionState.subtitleContainerStyles
+        })
+        .catch(() => {
+          // Content script might not be loaded yet, ignore
+        })
     }
 
     console.log("[Background] Broadcast state to", tabs.length, "tabs")
@@ -519,6 +529,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         .sendMessage(tabId, {
           action: "setWordCardStyles",
           styles: extensionState.wordCardStyles
+        })
+        .catch(() => {
+          // Content script might not be loaded yet, ignore
+        })
+
+      chrome.tabs
+        .sendMessage(tabId, {
+          action: "setSubtitleContainerStyles",
+          styles: extensionState.subtitleContainerStyles
         })
         .catch(() => {
           // Content script might not be loaded yet, ignore
