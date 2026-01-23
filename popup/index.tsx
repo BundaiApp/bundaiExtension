@@ -63,10 +63,10 @@ function MainPage({ onOpenTabs }) {
   const [subtitleContainerStyles, setSubtitleContainerStyles] = useState({
     backgroundColor: "#000000",
     textColor: "#ffffff",
-    fontSize: 50,
+    fontSize: 40,
     opacity: 0.9,
     borderRadius: 8,
-    verticalPosition: 10
+    verticalPosition: 25
   })
   const [showSubtitleStyleEditor, setShowSubtitleStyleEditor] = useState(false)
 
@@ -369,7 +369,10 @@ function MainPage({ onOpenTabs }) {
     // Load WordCard styles
     secureStorage.get("wordCardStyles").then((value) => {
       if (value && typeof value === "object") {
-        setWordCardStyles((prev) => ({ ...prev, ...value }))
+        setWordCardStyles((prev: typeof wordCardStyles) => ({
+          ...prev,
+          ...(value as object)
+        }))
         console.log("[MainPage] wordCardStyles:", value)
       }
     })
@@ -377,7 +380,10 @@ function MainPage({ onOpenTabs }) {
     // Load Japanese Subtitle container styles
     secureStorage.get("subtitleContainerStyles").then((value) => {
       if (value && typeof value === "object") {
-        setSubtitleContainerStyles((prev) => ({ ...prev, ...value }))
+        setSubtitleContainerStyles((prev: typeof subtitleContainerStyles) => ({
+          ...prev,
+          ...(value as object)
+        }))
         console.log("[MainPage] subtitleContainerStyles:", value)
       }
     })
@@ -507,10 +513,10 @@ function MainPage({ onOpenTabs }) {
     const defaultStyles = {
       backgroundColor: "#000000",
       textColor: "#ffffff",
-      fontSize: 50,
+      fontSize: 40,
       opacity: 0.9,
       borderRadius: 8,
-      verticalPosition: 10
+      verticalPosition: 25
     }
     setSubtitleContainerStyles(defaultStyles)
     await secureStorage.set("subtitleContainerStyles", defaultStyles)
@@ -897,12 +903,12 @@ function MainPage({ onOpenTabs }) {
               {/* Vertical Position */}
               <div>
                 <label className="text-xs font-semibold block mb-1">
-                  Vertical Position: {subtitleContainerStyles.verticalPosition}%
+                  Vertical Position: {subtitleContainerStyles.verticalPosition}% from bottom
                 </label>
                 <input
                   type="range"
-                  min="1"
-                  max="30"
+                  min="10"
+                  max="50"
                   value={subtitleContainerStyles.verticalPosition}
                   onChange={(e) =>
                     handleSubtitleStyleChange(

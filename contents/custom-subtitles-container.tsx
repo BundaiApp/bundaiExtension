@@ -139,7 +139,7 @@ class CustomSubtitleContainer {
       backgroundColor: "#000000",
       opacity: 0.8
     },
-    position: 15,
+    position: 25,
     gap: 10
   }
 
@@ -195,7 +195,7 @@ class CustomSubtitleContainer {
         backgroundColor:
           this.subtitleContainerStyles.backgroundColor || "#000000",
         color: this.subtitleContainerStyles.textColor || "#ffffff",
-        fontSize: this.subtitleContainerStyles.fontSize || 32,
+        fontSize: this.subtitleContainerStyles.fontSize || 40,
         opacity: this.subtitleContainerStyles.opacity || 0.9,
         borderRadius: this.subtitleContainerStyles.borderRadius || 8
       })
@@ -205,10 +205,21 @@ class CustomSubtitleContainer {
         backgroundColor:
           this.subtitleContainerStyles.backgroundColor || "#000000",
         color: this.subtitleContainerStyles.textColor || "#ffffff",
-        fontSize: this.subtitleContainerStyles.fontSize || 32,
+        fontSize: this.subtitleContainerStyles.fontSize || 40,
         opacity: this.subtitleContainerStyles.opacity || 0.9,
         borderRadius: this.subtitleContainerStyles.borderRadius || 8
       })
+    }
+
+    // Always reapply position when fullscreen state changes (both entering and exiting)
+    // This ensures consistent positioning across both modes
+    if (this.subtitleContainer) {
+      const verticalPos =
+        this.subtitleContainerStyles.verticalPosition ?? this.settings.position
+      this.subtitleContainer.style.left = "50%"
+      this.subtitleContainer.style.transform = "translateX(-50%)"
+      this.subtitleContainer.style.bottom = `${verticalPos}%`
+      this.subtitleContainer.style.top = "auto"
     }
   }
 
@@ -268,7 +279,7 @@ class CustomSubtitleContainer {
             backgroundColor:
               this.subtitleContainerStyles.backgroundColor || "#000000",
             color: this.subtitleContainerStyles.textColor || "#ffffff",
-            fontSize: this.subtitleContainerStyles.fontSize || 50,
+            fontSize: this.subtitleContainerStyles.fontSize || 40,
             opacity: this.subtitleContainerStyles.opacity || 0.9,
             borderRadius: this.subtitleContainerStyles.borderRadius || 8
           })
@@ -278,7 +289,7 @@ class CustomSubtitleContainer {
             backgroundColor:
               this.subtitleContainerStyles.backgroundColor || "#000000",
             color: this.subtitleContainerStyles.textColor || "#ffffff",
-            fontSize: this.subtitleContainerStyles.fontSize || 50,
+            fontSize: this.subtitleContainerStyles.fontSize || 40,
             opacity: this.subtitleContainerStyles.opacity || 0.9,
             borderRadius: this.subtitleContainerStyles.borderRadius || 8
           })
@@ -289,7 +300,10 @@ class CustomSubtitleContainer {
           const verticalPos =
             this.subtitleContainerStyles.verticalPosition ??
             this.settings.position
+          this.subtitleContainer.style.left = "50%"
+          this.subtitleContainer.style.transform = "translateX(-50%)"
           this.subtitleContainer.style.bottom = `${verticalPos}%`
+          this.subtitleContainer.style.top = "auto"
         }
       }
     } catch (error) {
@@ -553,13 +567,8 @@ class CustomSubtitleContainer {
     this.subtitleContainer = document.createElement("div")
     this.subtitleContainer.id = "bundai-subtitle-root"
     this.subtitleContainer.className = "custom-subtitle-container"
-    const verticalPos =
-      this.subtitleContainerStyles.verticalPosition ?? this.settings.position
     this.subtitleContainer.style.cssText = `
       position: fixed;
-      left: 50%;
-      transform: translateX(-50%);
-      bottom: ${verticalPos}%;
       z-index: 9999;
       display: flex;
       flex-direction: column;
@@ -572,11 +581,13 @@ class CustomSubtitleContainer {
 
     this.subtitle1Element = document.createElement("div")
     this.subtitle1Element.className = "custom-subtitle subtitle-1"
+    this.subtitle1Element.style.cursor = "default"
     this.applySubtitleStyles(this.subtitle1Element, this.settings.subtitle1)
     this.subtitleContainer.appendChild(this.subtitle1Element)
 
     this.subtitle2Element = document.createElement("div")
     this.subtitle2Element.className = "custom-subtitle subtitle-2"
+    this.subtitle2Element.style.cursor = "default"
     this.applySubtitleStyles(this.subtitle2Element, this.settings.subtitle2)
     this.subtitleContainer.appendChild(this.subtitle2Element)
 
@@ -584,12 +595,23 @@ class CustomSubtitleContainer {
 
     document.body.appendChild(this.subtitleContainer)
 
+    this.loadSavedPosition()
     this.startSubtitleUpdates()
 
     console.log("[Custom Subtitles] Subtitle container created and positioned")
 
-    // ✅ AUTO-LOAD: Load saved subtitle selections automatically
     this.loadSavedSubtitles()
+  }
+
+  private loadSavedPosition(): void {
+    if (!this.subtitleContainer) return
+
+    const verticalPos =
+      this.subtitleContainerStyles.verticalPosition ?? this.settings.position
+    this.subtitleContainer.style.left = "50%"
+    this.subtitleContainer.style.transform = "translateX(-50%)"
+    this.subtitleContainer.style.bottom = `${verticalPos}%`
+    this.subtitleContainer.style.top = "auto"
   }
 
   public setEnabled(enabled: boolean): void {
@@ -1180,7 +1202,7 @@ class CustomSubtitleContainer {
               backgroundColor:
                 this.subtitleContainerStyles.backgroundColor || "#000000",
               color: this.subtitleContainerStyles.textColor || "#ffffff",
-              fontSize: this.subtitleContainerStyles.fontSize || 32,
+              fontSize: this.subtitleContainerStyles.fontSize || 40,
               opacity: this.subtitleContainerStyles.opacity || 0.9,
               borderRadius: this.subtitleContainerStyles.borderRadius || 8
             })
@@ -1190,7 +1212,7 @@ class CustomSubtitleContainer {
               backgroundColor:
                 this.subtitleContainerStyles.backgroundColor || "#000000",
               color: this.subtitleContainerStyles.textColor || "#ffffff",
-              fontSize: this.subtitleContainerStyles.fontSize || 50,
+              fontSize: this.subtitleContainerStyles.fontSize || 40,
               opacity: this.subtitleContainerStyles.opacity || 0.9,
               borderRadius: this.subtitleContainerStyles.borderRadius || 8
             })
@@ -1201,7 +1223,10 @@ class CustomSubtitleContainer {
             const verticalPos =
               this.subtitleContainerStyles.verticalPosition ??
               this.settings.position
+            this.subtitleContainer.style.left = "50%"
+            this.subtitleContainer.style.transform = "translateX(-50%)"
             this.subtitleContainer.style.bottom = `${verticalPos}%`
+            this.subtitleContainer.style.top = "auto"
           }
 
           sendResponse({ success: true })
