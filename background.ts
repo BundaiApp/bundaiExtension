@@ -5,8 +5,7 @@ import { storage, storageReady } from "./utils/secure-storage"
 
 export {}
 
-const DROPLET_SERVER_ADDRESS = "https://api.bundai.app/graphql"
-const LOCAL_ADDRESS = "http://localhost:3000/graphql"
+const DROPLET_SERVER_ADDRESS = "http://localhost:3000/graphql"
 
 console.log(
   "Live now; make now always the most precious time. Now will never come again."

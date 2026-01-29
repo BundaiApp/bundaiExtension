@@ -978,7 +978,7 @@ class CustomSubtitleContainer {
   }
 
   public async loadSubtitleFromUrl(
-    url: string,
+    urlOrContent: string,
     trackNumber: 1 | 2
   ): Promise<void> {
     if (!this.isEnabled) {
@@ -990,18 +990,36 @@ class CustomSubtitleContainer {
 
     try {
       console.log(
-        `[Custom Subtitles] Loading subtitle ${trackNumber} from:`,
-        url
+        `[Custom Subtitles] loadSubtitleFromUrl called: track=${trackNumber}, value length=${urlOrContent.length}, startsWith WEBVTT=${urlOrContent.startsWith("WEBVTT")}`
       )
 
+      // Check if it's a URL or VTT content
+      const isVttContent =
+        urlOrContent.startsWith("WEBVTT") || urlOrContent.includes("\n")
+
       if (trackNumber === 1) {
-        this.subtitle1Url = url
+        this.subtitle1Url = isVttContent ? "vtt-content" : urlOrContent
       } else {
-        this.subtitle2Url = url
+        this.subtitle2Url = isVttContent ? "vtt-content" : urlOrContent
       }
 
-      const response = await fetch(url)
-      const subtitleText = await response.text()
+      let subtitleText: string
+
+      if (isVttContent) {
+        // Direct VTT content
+        subtitleText = urlOrContent
+        console.log(
+          `[Custom Subtitles] Loading subtitle ${trackNumber} from VTT content (length: ${urlOrContent.length})`
+        )
+      } else {
+        // URL - fetch it
+        console.log(
+          `[Custom Subtitles] Loading subtitle ${trackNumber} from URL:`,
+          urlOrContent
+        )
+        const response = await fetch(urlOrContent)
+        subtitleText = await response.text()
+      }
 
       const parsedSubtitles = this.parseSubtitleText(subtitleText)
 

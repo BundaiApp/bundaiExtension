@@ -3,12 +3,23 @@ import { useEffect, useRef, useState } from "react"
 
 import "../style.css"
 
-import { ApolloProvider } from "@apollo/client"
+import { ApolloProvider, gql, useQuery } from "@apollo/client"
 
 import { SecureStorage } from "@plasmohq/storage/secure"
 
 import SubtitlesSection from "~components/SubtitlesSection"
 import client from "~graphql"
+
+const GET_MANUAL_SUBTITLES = gql`
+  query GetManualSubtitles($videoId: String!) {
+    getManualSubtitles(videoId: $videoId) {
+      videoId
+      subtitles
+      success
+      error
+    }
+  }
+`
 
 // Utility function to extract video ID from YouTube URLs
 function extractVideoId(url: string): string | null {
@@ -69,8 +80,6 @@ function MainPage({ onOpenTabs }) {
     verticalPosition: 25
   })
   const [showSubtitleStyleEditor, setShowSubtitleStyleEditor] = useState(false)
-
-  const DROPLET_BASE_URL = "https://api.bundai.app"
 
   // Function to get current tab URL and extract video ID
   const getCurrentVideoId = async () => {
@@ -142,67 +151,37 @@ function MainPage({ onOpenTabs }) {
     try {
       const cookieHeader = await getYouTubeCookieHeader()
 
-      const res = await fetch(
-        `${DROPLET_BASE_URL}/subtitles/${videoId}?subtitle_format=vtt`,
-        {
+      console.log("[MainPage] Fetching subtitles for video:", videoId)
+      console.log("[MainPage] Cookie header length:", cookieHeader?.length || 0)
+
+      const { data, errors } = await client.query({
+        query: GET_MANUAL_SUBTITLES,
+        variables: { videoId },
+        context: {
           headers: cookieHeader
             ? {
                 "X-Youtube-Cookies": cookieHeader
               }
             : undefined
         }
-      )
+      })
 
-      if (!res.ok) {
-        const errorData = await res.json()
-        throw new Error(errorData.detail || "Failed to fetch subtitles.")
+      if (errors) {
+        console.error("[MainPage] GraphQL errors:", errors)
+        throw new Error(errors[0].message || "GraphQL error")
       }
 
-      const raw = await res.json()
-      const rawSubs = raw?.subtitles ?? raw ?? {}
+      const result = data?.getManualSubtitles
 
-      const subtitles: Record<string, string[]> = Object.fromEntries(
-        Object.entries(rawSubs).map(([lang, entries]) => {
-          try {
-            const pickFromArray = (arr: any[]): string | null => {
-              if (!Array.isArray(arr) || arr.length === 0) return null
-              for (let i = arr.length - 1; i >= 0; i--) {
-                const item = arr[i]
-                const url = typeof item === "string" ? item : item?.url
-                const ext = typeof item === "object" ? item?.ext : undefined
-                if (
-                  (typeof ext === "string" && ext.toLowerCase() === "vtt") ||
-                  (typeof url === "string" &&
-                    (url.includes(".vtt") ||
-                      url.toLowerCase().includes("mime=text%2Fvtt")))
-                ) {
-                  return typeof url === "string" ? url : null
-                }
-              }
-              const last = arr[arr.length - 1]
-              const fallback = typeof last === "string" ? last : last?.url
-              return typeof fallback === "string" ? fallback : null
-            }
+      if (!result?.success) {
+        console.error("[MainPage] API returned success:false:", result?.error)
+        throw new Error(result?.error || "Failed to fetch subtitles.")
+      }
 
-            let best: string | null = null
-            if (Array.isArray(entries)) {
-              best = pickFromArray(entries)
-            } else if (entries && typeof entries === "object") {
-              if ((entries as any).vtt) {
-                best = pickFromArray((entries as any).vtt)
-              }
-              if (!best) {
-                const flat = (Object.values(entries as any) as any[]).flat()
-                best = pickFromArray(flat)
-              }
-            }
+      // Server returns original format: object with language keys, each value is array of URLs
+      const subtitles: Record<string, string[]> = result?.subtitles ?? {}
 
-            return [lang, best ? [best] : []]
-          } catch {
-            return [lang, []]
-          }
-        })
-      )
+      console.log("[MainPage] Received subtitles:", subtitles)
 
       setCachedSubtitles(subtitles)
       try {
@@ -903,7 +882,8 @@ function MainPage({ onOpenTabs }) {
               {/* Vertical Position */}
               <div>
                 <label className="text-xs font-semibold block mb-1">
-                  Vertical Position: {subtitleContainerStyles.verticalPosition}% from bottom
+                  Vertical Position: {subtitleContainerStyles.verticalPosition}%
+                  from bottom
                 </label>
                 <input
                   type="range"

@@ -13,7 +13,7 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
   error,
   currentVideoId
 }) => {
-  // States to store the selected subtitle URLs
+  // States to store selected subtitle URLs
   const [selectedSubtitle1, setSelectedSubtitle1] = useState<string | null>(
     null
   )
@@ -26,7 +26,7 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
     track2: boolean
   }>({ track1: false, track2: false })
 
-  // Track the previous video ID to detect changes
+  // Track previous video ID to detect changes
   const previousVideoIdRef = useRef<string | null>(null)
   const [sessionLoadedTracks, setSessionLoadedTracks] = useState<{
     track1: boolean
@@ -78,6 +78,10 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
 
     try {
       const key = `subtitle${trackNumber}_${currentVideoId}`
+      console.log(
+        `[SubtitlesSection] Saving track ${trackNumber} to storage:`,
+        { key, url }
+      )
       if (url) {
         await chrome.storage.local.set({ [key]: url })
       } else {
@@ -96,7 +100,7 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
     try {
       setLoadingStatus(`Loading subtitle ${trackNumber}...`)
 
-      // Get the active tab
+      // Get active tab
       const [tab] = await chrome.tabs.query({
         active: true,
         currentWindow: true
@@ -152,6 +156,10 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
     const url = event.target.value || null
     const previousSelection = selectedSubtitle1
 
+    console.log(`[SubtitlesSection] Track 1 selection:`, {
+      url,
+      previous: url === previousSelection
+    })
     setSelectedSubtitle1(url)
     await saveSelection(1, url)
 
@@ -226,6 +234,38 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
     }
   }, [currentVideoId])
 
+  // Function to get all subtitle URLs for a language
+  const getSubtitleOptions = (langCode: string) => {
+    const langSubtitles = subtitles[langCode] || []
+    return langSubtitles
+  }
+
+  // Function to get display name for a language code
+  const getLanguageName = (langCode: string) => {
+    const names: Record<string, string> = {
+      ja: "Japanese",
+      en: "English",
+      es: "Spanish",
+      fr: "French",
+      de: "German",
+      it: "Italian",
+      pt: "Portuguese",
+      ru: "Russian",
+      ko: "Korean",
+      zh: "Chinese",
+      ar: "Arabic",
+      hi: "Hindi",
+      th: "Thai",
+      vi: "Vietnamese"
+    }
+    return names[langCode] || langCode.toUpperCase()
+  }
+
+  // Function to get display name for a format number
+  const getFormatName = (formatNum: number) => {
+    return `Format ${formatNum + 1}`
+  }
+
   return (
     <div className="mt-4">
       <h3 className="text-black font-bold">Available Subtitles</h3>
@@ -253,10 +293,10 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
               value={selectedSubtitle1 || ""}
               onChange={handleSubtitle1Change}>
               <option value="">Select Subtitle</option>
-              {Object.entries(subtitles).map(([lang, urls]) =>
+              {Object.entries(subtitles).map(([langCode, urls]) =>
                 urls.map((url, index) => (
-                  <option key={`${lang}-${index}`} value={url}>
-                    {lang.toUpperCase()} - Format {index + 1}
+                  <option key={`${langCode}-${index}`} value={url}>
+                    {getLanguageName(langCode)} - {getFormatName(index + 1)}
                   </option>
                 ))
               )}
@@ -273,10 +313,10 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
               value={selectedSubtitle2 || ""}
               onChange={handleSubtitle2Change}>
               <option value="">Select Subtitle</option>
-              {Object.entries(subtitles).map(([lang, urls]) =>
+              {Object.entries(subtitles).map(([langCode, urls]) =>
                 urls.map((url, index) => (
-                  <option key={`${lang}-${index}`} value={url}>
-                    {lang.toUpperCase()} - Format {index + 1}
+                  <option key={`${langCode}-${index}`} value={url}>
+                    {getLanguageName(langCode)} - {getFormatName(index + 1)}
                   </option>
                 ))
               )}
@@ -314,7 +354,7 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
                 {selectedSubtitle1 ? (
                   <span className="text-green-600">
                     {Object.entries(subtitles)
-                      .find(([lang, urls]) =>
+                      .find(([langCode, urls]) =>
                         urls.includes(selectedSubtitle1)
                       )?.[0]
                       ?.toUpperCase() || "Selected"}
@@ -331,7 +371,7 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
                 {selectedSubtitle2 ? (
                   <span className="text-green-600">
                     {Object.entries(subtitles)
-                      .find(([lang, urls]) =>
+                      .find(([langCode, urls]) =>
                         urls.includes(selectedSubtitle2)
                       )?.[0]
                       ?.toUpperCase() || "Selected"}
