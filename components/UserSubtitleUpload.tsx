@@ -57,13 +57,14 @@ const UserSubtitleUpload: React.FC<UserSubtitleUploadProps> = ({
     setSuccess(null)
     try {
       const text = await file.text()
-      const cues = parseSubtitleText(text)
+      const cues = parseSubtitleText(text, file.name)
       if (cues.length === 0) {
         setError("Could not parse subtitle file. Please check the format.")
         setLoading(false)
         return
       }
-      const format = file.name.toLowerCase().endsWith(".vtt") ? "vtt" : "srt"
+      const lowerName = file.name.toLowerCase()
+      const format = lowerName.endsWith(".vtt") ? "vtt" : lowerName.endsWith(".ass") ? "ass" : "srt"
       const subtitleData: StoredUserSubtitle = {
         cues, timeOffset: 0, fileName: file.name, format, uploadedAt: Date.now()
       }
@@ -156,13 +157,13 @@ const UserSubtitleUpload: React.FC<UserSubtitleUploadProps> = ({
           </div>
           <div className="border-t border-gray-200 pt-3 mt-3">
             <label className="text-xs text-gray-600 block mb-1">Or upload a different file:</label>
-            <input ref={fileInputRef} type="file" accept=".vtt,.srt" onChange={handleFileUpload} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-500 file:text-white hover:file:bg-gray-600" />
+            <input ref={fileInputRef} type="file" accept=".vtt,.srt,.ass" onChange={handleFileUpload} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-500 file:text-white hover:file:bg-gray-600" />
           </div>
         </div>
       ) : (
         <div className="space-y-2">
-          <input ref={fileInputRef} type="file" accept=".vtt,.srt" onChange={handleFileUpload} className="w-full text-xs file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:bg-blue-500 file:text-white hover:file:bg-blue-600" />
-          <p className="text-xs text-gray-500">Upload a VTT or SRT file with Japanese subtitles</p>
+          <input ref={fileInputRef} type="file" accept=".vtt,.srt,.ass" onChange={handleFileUpload} className="w-full text-xs file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:bg-blue-500 file:text-white hover:file:bg-blue-600" />
+          <p className="text-xs text-gray-500">Upload VTT, SRT, or ASS file with Japanese subtitles</p>
         </div>
       )}
     </div>
