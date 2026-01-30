@@ -3,26 +3,42 @@ import { useEffect, useRef, useState } from "react"
 import {
   applyTimeOffset,
   parseSubtitleText,
-  SubtitleCue
+  type SubtitleCue
 } from "~utils/subtitleParser"
+
+// Simple hash function for URL-based storage keys
+function hashString(str: string): string {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+  return Math.abs(hash).toString(36).substring(0, 10)
+}
 
 interface UserSubtitleUploadProps {
   currentVideoId: string | null
+  currentUrl: string
   isEnabled: boolean
+  isYouTube?: boolean
 }
 
 interface StoredUserSubtitle {
   cues: SubtitleCue[]
   timeOffset: number
   fileName: string
-  format: "vtt" | "srt"
+  format: "vtt" | "srt" | "ass"
   uploadedAt: number
 }
 
-const UserSubtitleUpload: React.FC<UserSubtitleUploadProps> = ({
+export default function UserSubtitleUpload({
   currentVideoId,
-  isEnabled
-}) => {
+  currentUrl,
+  isEnabled,
+  isYouTube = false
+}: UserSubtitleUploadProps) {
+  const storageKey = currentVideoId || `url_${hashString(currentUrl)}`
   const [subtitle, setSubtitle] = useState<StoredUserSubtitle | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,16 +46,16 @@ const UserSubtitleUpload: React.FC<UserSubtitleUploadProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (currentVideoId) {
+    if (storageKey) {
       loadSavedSubtitle()
     }
-  }, [currentVideoId])
+  }, [storageKey])
 
   const loadSavedSubtitle = async () => {
-    if (!currentVideoId) return
+    if (!storageKey) return
     try {
-      const result = await chrome.storage.local.get([`userSubtitle_${currentVideoId}`])
-      const saved = result[`userSubtitle_${currentVideoId}`]
+      const result = await chrome.storage.local.get([`userSubtitle_${storageKey}`])
+      const saved = result[`userSubtitle_${storageKey}`]
       if (saved) setSubtitle(saved)
     } catch (error) {
       console.error("Error loading saved user subtitle:", error)
@@ -48,8 +64,8 @@ const UserSubtitleUpload: React.FC<UserSubtitleUploadProps> = ({
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (!file || !currentVideoId) {
-      setError("No file selected or no video detected")
+    if (!file || !storageKey) {
+      setError("No file selected")
       return
     }
     setLoading(true)
@@ -59,22 +75,23 @@ const UserSubtitleUpload: React.FC<UserSubtitleUploadProps> = ({
       const text = await file.text()
       const cues = parseSubtitleText(text, file.name)
       if (cues.length === 0) {
-        setError("Could not parse subtitle file. Please check the format.")
+        setError("Could not parse subtitle file")
         setLoading(false)
         return
       }
-      const lowerName = file.name.toLowerCase()
-      const format = lowerName.endsWith(".vtt") ? "vtt" : lowerName.endsWith(".ass") ? "ass" : "srt"
+      const format: "vtt" | "srt" | "ass" = 
+        file.name.toLowerCase().endsWith(".vtt") ? "vtt" : 
+        file.name.toLowerCase().endsWith(".ass") ? "ass" : "srt"
       const subtitleData: StoredUserSubtitle = {
         cues, timeOffset: 0, fileName: file.name, format, uploadedAt: Date.now()
       }
-      await chrome.storage.local.set({ [`userSubtitle_${currentVideoId}`]: subtitleData })
+      await chrome.storage.local.set({ [`userSubtitle_${storageKey}`]: subtitleData })
       setSubtitle(subtitleData)
-      setSuccess(`Subtitle uploaded successfully! (${cues.length} cues)`)
+      setSuccess(`Loaded ${cues.length} cues`)
       await loadSubtitleInContentScript(subtitleData)
       setTimeout(() => setSuccess(null), 3000)
     } catch (err: any) {
-      setError(`Error uploading file: ${err.message}`)
+      setError(`Error: ${err.message}`)
     } finally {
       setLoading(false)
       if (fileInputRef.current) fileInputRef.current.value = ""
@@ -84,90 +101,150 @@ const UserSubtitleUpload: React.FC<UserSubtitleUploadProps> = ({
   const loadSubtitleInContentScript = async (subtitleData: StoredUserSubtitle) => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab.id) throw new Error("No active tab found")
+      if (!tab.id) throw new Error("No active tab")
       const adjustedCues = applyTimeOffset(subtitleData.cues, subtitleData.timeOffset)
-      await chrome.tabs.sendMessage(tab.id, { action: "loadUserSubtitle", trackNumber: 1, cues: adjustedCues })
+      await chrome.tabs.sendMessage(tab.id, { 
+        action: "loadUserSubtitle", 
+        trackNumber: 1, 
+        cues: adjustedCues 
+      })
     } catch (error: any) {
       console.error("Error loading subtitle:", error)
-      setError(`Failed to load subtitle: ${error.message}`)
+      setError(`Failed: ${error.message}`)
     }
   }
 
-  const adjustTimeOffset = async (deltaSeconds: number) => {
-    if (!currentVideoId || !subtitle) return
-    const newOffset = subtitle.timeOffset + deltaSeconds
-    const updatedSubtitle = { ...subtitle, timeOffset: newOffset }
-    setSubtitle(updatedSubtitle)
-    await chrome.storage.local.set({ [`userSubtitle_${currentVideoId}`]: updatedSubtitle })
-    await loadSubtitleInContentScript(updatedSubtitle)
+  const sendCommand = async (command: string, value?: number) => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (tab.id) {
+        await chrome.tabs.sendMessage(tab.id, { action: "subtitlePlayback", command, value })
+      }
+    } catch (e) {
+      console.error("Command failed:", e)
+    }
   }
 
   const clearSubtitle = async () => {
-    if (!currentVideoId) return
-    try {
-      await chrome.storage.local.remove([`userSubtitle_${currentVideoId}`])
-      setSubtitle(null)
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (tab.id) await chrome.tabs.sendMessage(tab.id, { action: "clearUserSubtitle", trackNumber: 1 })
-      setSuccess("Subtitle cleared")
-      setTimeout(() => setSuccess(null), 2000)
-    } catch (error: any) {
-      setError(`Error clearing subtitle: ${error.message}`)
+    if (!storageKey) return
+    await chrome.storage.local.remove([`userSubtitle_${storageKey}`])
+    setSubtitle(null)
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (tab.id) {
+      await chrome.tabs.sendMessage(tab.id, { action: "clearUserSubtitle", trackNumber: 1 })
     }
   }
 
-  const formatTimeOffset = (seconds: number): string => {
-    const sign = seconds >= 0 ? "+" : ""
-    const absSeconds = Math.abs(seconds)
-    const mins = Math.floor(absSeconds / 60)
-    const secs = Math.floor(absSeconds % 60)
-    const millis = Math.floor((absSeconds % 1) * 1000)
-    return `${sign}${mins}:${String(secs).padStart(2, "0")}.${String(millis).padStart(3, "0")}`
+  const adjustTimeOffset = async (delta: number) => {
+    if (!storageKey || !subtitle) return
+    const updated = { ...subtitle, timeOffset: subtitle.timeOffset + delta }
+    setSubtitle(updated)
+    await chrome.storage.local.set({ [`userSubtitle_${storageKey}`]: updated })
+    await loadSubtitleInContentScript(updated)
   }
 
   if (!isEnabled) {
-    return <div className="mt-4 p-3 bg-gray-200 rounded"><p className="text-xs text-gray-600">Enable the extension to upload subtitles</p></div>
+    return <div className="mt-4 p-3 bg-gray-200 rounded"><p className="text-xs">Enable extension to upload</p></div>
   }
 
   return (
     <div className="mt-4 bg-white bg-opacity-50 p-3 rounded border-2 border-black">
-      <h3 className="text-black font-bold mb-2">Upload Japanese Subtitle</h3>
-      {loading && <p className="text-xs text-blue-700 mb-2">Processing subtitle file...</p>}
-      {error && <p className="text-xs text-red-700 mb-2">{error}</p>}
-      {success && <p className="text-xs text-green-700 mb-2">{success}</p>}
+      <h3 className="text-black font-bold mb-2">Upload Subtitle</h3>
+      {loading && <p className="text-xs text-blue-600 mb-2">Loading...</p>}
+      {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
+      {success && <p className="text-xs text-green-600 mb-2">{success}</p>}
+      
       {subtitle ? (
-        <div className="space-y-3">
+        <div className="space-y-2">
           <div className="flex items-center justify-between bg-green-50 p-2 rounded">
-            <span className="text-xs text-green-800 truncate flex-1 mr-2">{subtitle.fileName}</span>
-            <span className="text-xs text-green-600">{subtitle.cues.length} cues</span>
+            <span className="text-xs text-green-800 truncate">{subtitle.fileName}</span>
+            <span className="text-xs text-green-600 ml-2">{subtitle.cues.length} cues</span>
           </div>
-          <div className="bg-gray-50 p-2 rounded">
-            <label className="text-xs font-semibold block mb-2">Time Sync (Offset: {formatTimeOffset(subtitle.timeOffset)}s)</label>
-            <div className="grid grid-cols-4 gap-1">
-              <button onClick={() => adjustTimeOffset(-0.5)} className="px-1 py-1.5 bg-blue-500 text-white text-xs rounded hover:bg-blue-600">← -0.5s</button>
-              <button onClick={() => adjustTimeOffset(-0.1)} className="px-1 py-1.5 bg-blue-400 text-white text-xs rounded hover:bg-blue-500">← -0.1s</button>
-              <button onClick={() => adjustTimeOffset(0.1)} className="px-1 py-1.5 bg-blue-400 text-white text-xs rounded hover:bg-blue-500">+0.1s →</button>
-              <button onClick={() => adjustTimeOffset(0.5)} className="px-1 py-1.5 bg-blue-500 text-white text-xs rounded hover:bg-blue-600">+0.5s →</button>
+          
+          {/* Non-YouTube Controls */}
+          {!isYouTube && (
+            <div className="bg-yellow-50 p-2 rounded border border-yellow-300">
+              <p className="text-xs font-bold text-yellow-800 mb-2">Manual Controls</p>
+              
+              {/* Main control row: [ -0.5s ] [ -0.2s ] [ PLAY/PAUSE ] [ +0.2s ] [ +0.5s ] */}
+              <div className="flex items-center justify-center gap-1 mb-2">
+                <button 
+                  onClick={() => sendCommand("seek", -0.5)} 
+                  className="w-12 h-10 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs rounded font-bold transition-colors flex flex-col items-center justify-center leading-tight"
+                >
+                  <span>«</span>
+                  <span>-0.5</span>
+                </button>
+                <button 
+                  onClick={() => sendCommand("seek", -0.2)} 
+                  className="w-12 h-10 bg-yellow-600 hover:bg-yellow-700 active:bg-yellow-800 text-white text-xs rounded font-bold transition-colors flex flex-col items-center justify-center leading-tight"
+                >
+                  <span>‹</span>
+                  <span>-0.2</span>
+                </button>
+                
+                {/* Play/Pause Toggle Button */}
+                <button 
+                  onClick={() => sendCommand("toggle")} 
+                  className="w-16 h-12 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm rounded font-bold transition-colors flex flex-col items-center justify-center mx-1"
+                >
+                  <span>▶</span>
+                  <span className="text-xs">/⏸</span>
+                </button>
+                
+                <button 
+                  onClick={() => sendCommand("seek", 0.2)} 
+                  className="w-12 h-10 bg-green-400 hover:bg-green-500 active:bg-green-600 text-white text-xs rounded font-bold transition-colors flex flex-col items-center justify-center leading-tight"
+                >
+                  <span>›</span>
+                  <span>+0.2</span>
+                </button>
+                <button 
+                  onClick={() => sendCommand("seek", 0.5)} 
+                  className="w-12 h-10 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white text-xs rounded font-bold transition-colors flex flex-col items-center justify-center leading-tight"
+                >
+                  <span>»</span>
+                  <span>+0.5</span>
+                </button>
+              </div>
+              
+              {/* Reset button below */}
+              <button 
+                onClick={() => sendCommand("reset")} 
+                className="w-full py-2 bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white text-sm rounded font-bold transition-colors flex items-center justify-center gap-2"
+              >
+                <span>↺</span>
+                <span>RESET (Sync to Video Start)</span>
+              </button>
+              
+              <p className="text-xs text-yellow-700 mt-2 text-center">Press RESET when video starts playing</p>
             </div>
-            <p className="text-xs text-gray-500 mt-2">Negative = show earlier, Positive = show later</p>
-          </div>
+          )}
+          
+          {/* YouTube Controls */}
+          {isYouTube && (
+            <div className="bg-gray-50 p-2 rounded">
+              <p className="text-xs font-bold mb-1">Time Offset: {subtitle.timeOffset.toFixed(1)}s</p>
+              <div className="grid grid-cols-4 gap-1">
+                <button onClick={() => adjustTimeOffset(-0.5)} className="py-1 bg-blue-500 text-white text-xs rounded">-0.5s</button>
+                <button onClick={() => adjustTimeOffset(-0.1)} className="py-1 bg-blue-400 text-white text-xs rounded">-0.1s</button>
+                <button onClick={() => adjustTimeOffset(0.1)} className="py-1 bg-blue-400 text-white text-xs rounded">+0.1s</button>
+                <button onClick={() => adjustTimeOffset(0.5)} className="py-1 bg-blue-500 text-white text-xs rounded">+0.5s</button>
+              </div>
+            </div>
+          )}
+          
           <div className="flex gap-2">
-            <button onClick={clearSubtitle} className="flex-1 px-3 py-1.5 bg-red-500 text-white text-xs rounded hover:bg-red-600 font-medium">Remove Subtitle</button>
-            <button onClick={() => loadSubtitleInContentScript(subtitle)} className="flex-1 px-3 py-1.5 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 font-medium">Reload</button>
-          </div>
-          <div className="border-t border-gray-200 pt-3 mt-3">
-            <label className="text-xs text-gray-600 block mb-1">Or upload a different file:</label>
-            <input ref={fileInputRef} type="file" accept=".vtt,.srt,.ass" onChange={handleFileUpload} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-500 file:text-white hover:file:bg-gray-600" />
+            <button onClick={clearSubtitle} className="flex-1 py-1.5 bg-red-500 text-white text-xs rounded">Remove</button>
+            <button onClick={() => loadSubtitleInContentScript(subtitle)} className="flex-1 py-1.5 bg-blue-500 text-white text-xs rounded">Reload</button>
           </div>
         </div>
       ) : (
-        <div className="space-y-2">
-          <input ref={fileInputRef} type="file" accept=".vtt,.srt,.ass" onChange={handleFileUpload} className="w-full text-xs file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:bg-blue-500 file:text-white hover:file:bg-blue-600" />
-          <p className="text-xs text-gray-500">Upload VTT, SRT, or ASS file with Japanese subtitles</p>
+        <div>
+          <input ref={fileInputRef} type="file" accept=".vtt,.srt,.ass" onChange={handleFileUpload} className="w-full text-xs mb-2" />
+          <p className="text-xs text-gray-600">Upload VTT, SRT, or ASS file</p>
         </div>
       )}
     </div>
   )
 }
-
-export default UserSubtitleUpload

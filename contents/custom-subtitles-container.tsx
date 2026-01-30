@@ -19,7 +19,7 @@ export const getStyle = () => {
 }
 
 export const config: PlasmoCSConfig = {
-  matches: ["*://*.youtube.com/watch*"],
+  matches: ["<all_urls>"],
   all_frames: false
 }
 
@@ -171,8 +171,16 @@ class CustomSubtitleContainer {
   private isInitialized: boolean = false
   private wordCardStyles: WordCardStyles = {}
   private subtitleContainerStyles: SubtitleContainerStyles = {}
+  
+  // Simple non-YouTube support
+  private isYouTube: boolean = false
+  private subtitleStartTime: number = 0
+  private isPlaying: boolean = false
 
   constructor() {
+    // Detect if we're on YouTube
+    this.isYouTube = window.location.hostname.includes("youtube.com")
+    
     this.setupMessageListener()
     this.initializeJapanese()
     this.requestInitialState()
@@ -480,10 +488,15 @@ class CustomSubtitleContainer {
       return
     }
 
-    this.findAndSetupVideo()
-
-    if (!this.videoElement) {
-      this.observeForVideo()
+    if (this.isYouTube) {
+      // YouTube: need video for syncing
+      this.findAndSetupVideo()
+      if (!this.videoElement) {
+        this.observeForVideo()
+      }
+    } else {
+      // Non-YouTube: just create container
+      this.setupSubtitleContainer()
     }
   }
 
@@ -551,7 +564,9 @@ class CustomSubtitleContainer {
   }
 
   private setupSubtitleContainer(): void {
-    if (!this.videoElement || !this.isEnabled) return
+    // YouTube requires video, non-YouTube doesn't
+    if (!this.isEnabled) return
+    if (this.isYouTube && !this.videoElement) return
 
     document
       .querySelectorAll(
@@ -650,6 +665,8 @@ class CustomSubtitleContainer {
     this.wordCardContainer = document.createElement("div")
     this.wordCardContainer.id = "bundai-wordcard-root"
     this.wordCardContainer.className = "react-word-card-container"
+    this.wordCardContainer.style.position = "fixed"
+    this.wordCardContainer.style.zIndex = "2147483647"
 
     document.body.appendChild(this.wordCardContainer)
 
@@ -725,21 +742,31 @@ class CustomSubtitleContainer {
       clearInterval(this.updateInterval)
     }
 
+    // For non-YouTube, start timer from now
+    if (!this.isYouTube) {
+      this.subtitleStartTime = Date.now()
+      this.isPlaying = true
+    }
+
     this.updateInterval = setInterval(() => {
       this.updateSubtitles()
     }, 100)
   }
 
   private updateSubtitles(): void {
-    if (
-      !this.videoElement ||
-      !this.subtitle1Element ||
-      !this.subtitle2Element ||
-      !this.isEnabled
-    )
-      return
+    if (!this.subtitle1Element || !this.subtitle2Element || !this.isEnabled) return
 
-    const currentTime = this.videoElement.currentTime
+    let currentTime: number
+
+    if (this.isYouTube) {
+      // YouTube: use video time
+      if (!this.videoElement) return
+      currentTime = this.videoElement.currentTime
+    } else {
+      // Non-YouTube: use manual timer
+      if (!this.isPlaying) return
+      currentTime = (Date.now() - this.subtitleStartTime) / 1000
+    }
 
     const subtitle1Cue = this.subtitle1Data.find(
       (cue) => currentTime >= cue.start && currentTime <= cue.end
@@ -1302,6 +1329,15 @@ class CustomSubtitleContainer {
         if (message.action === "loadUserSubtitle") {
           console.log("[Custom Subtitles] loadUserSubtitle received")
           const { cues, trackNumber } = message
+          
+          // Enable and create container if needed
+          if (!this.isEnabled) {
+            this.setEnabled(true)
+          }
+          if (!this.subtitleContainer) {
+            this.setupSubtitleContainer()
+          }
+          
           if (trackNumber === 1) {
             this.subtitle1Data = cues
             this.lastProcessedSubtitle1Text = ""
@@ -1309,6 +1345,13 @@ class CustomSubtitleContainer {
             this.subtitle2Data = cues
             this.lastProcessedSubtitle2Text = ""
           }
+          
+          // For non-YouTube, reset and start timer
+          if (!this.isYouTube) {
+            this.subtitleStartTime = Date.now()
+            this.isPlaying = true
+          }
+          
           sendResponse({ success: true })
           return true
         }
@@ -1323,6 +1366,50 @@ class CustomSubtitleContainer {
             this.subtitle2Data = []
             this.lastProcessedSubtitle2Text = ""
           }
+          sendResponse({ success: true })
+          return true
+        }
+
+        // Playback controls for non-YouTube
+        if (message.action === "subtitlePlayback") {
+          const { command, value } = message
+          console.log("[Custom Subtitles] Playback command:", command, value)
+          
+          switch (command) {
+            case "play":
+              this.isPlaying = true
+              break
+            case "pause":
+              this.isPlaying = false
+              break
+            case "toggle":
+              // Toggle play/pause
+              this.isPlaying = !this.isPlaying
+              if (this.isPlaying) {
+                // Resuming - adjust start time to account for paused duration
+                this.subtitleStartTime = Date.now() - ((Date.now() - this.subtitleStartTime))
+              }
+              break
+            case "reset":
+              this.subtitleStartTime = Date.now()
+              this.isPlaying = true
+              break
+            case "seek":
+              // Adjust the start time to seek forward/backward
+              this.subtitleStartTime -= value * 1000
+              break
+          }
+          
+          sendResponse({ success: true, isPlaying: this.isPlaying })
+          return true
+        }
+
+        // Adjust offset for non-YouTube
+        if (message.action === "adjustSubtitleOffset") {
+          const { offset } = message
+          // Adjust start time based on offset change
+          const currentElapsed = (Date.now() - this.subtitleStartTime) / 1000
+          this.subtitleStartTime = Date.now() - (offset * 1000)
           sendResponse({ success: true })
           return true
         }

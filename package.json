@@ -6,7 +6,7 @@
   "author": "bundai",
   "scripts": {
     "dev": "plasmo dev",
-    "build": "plasmo build && cp -r build/chrome-mv3-prod/* build/ 2>/dev/null; rm -rf build/chrome-mv3-prod",
+    "build": "rm -rf build && plasmo build && mv build/chrome-mv3-prod build/prod && rm -rf build/chrome-mv3-dev 2>/dev/null; true",
     "package": "plasmo package"
   },
   "dependencies": {

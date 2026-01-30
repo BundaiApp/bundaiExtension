@@ -57,7 +57,7 @@ function MainPage({ onOpenTabs }) {
   const inFlightRequestsRef = useRef<Set<string>>(new Set())
 
   // Subtitle mode: 'api' | 'auto' | 'user'
-  const [subtitleMode, setSubtitleMode] = useState<"api" | "auto" | "user">("api")
+  const [subtitleMode, setSubtitleMode] = useState<"api" | "auto" | "user">("user")
   const [showRefreshMessage, setShowRefreshMessage] = useState(false)
 
   // WordCard styles state
@@ -591,6 +591,47 @@ function MainPage({ onOpenTabs }) {
         .
       </div>
 
+      {/* Debug Section */}
+      {enabled && (
+        <div className="bg-white bg-opacity-30 p-2 rounded border border-black border-opacity-20 mt-2">
+          <details>
+            <summary className="cursor-pointer text-xs font-semibold">Debug Info</summary>
+            <div className="mt-2 space-y-2">
+              <button
+                onClick={async () => {
+                  try {
+                    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+                    if (!tab.id) return
+                    const status = await chrome.tabs.sendMessage(tab.id, { action: "checkStatus" })
+                    console.log("[Debug] Status:", status)
+                    alert(`Status:\n- Enabled: ${status.isEnabled}\n- Has Container: ${status.hasContainer}\n- Video Element: ${status.videoElement}\n- Video Count: ${status.videoCount}\n- URL: ${status.url}`)
+                  } catch (e: any) {
+                    alert("Error checking status: " + e.message)
+                  }
+                }}
+                className="w-full px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600">
+                Check Status
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+                    if (!tab.id) return
+                    const result = await chrome.tabs.sendMessage(tab.id, { action: "forceFindVideo" })
+                    console.log("[Debug] Force find result:", result)
+                    alert(`Force Find Video:\n- Video Found: ${result.videoFound}\n- Video Count: ${result.videoCount}`)
+                  } catch (e: any) {
+                    alert("Error: " + e.message)
+                  }
+                }}
+                className="w-full px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600">
+                Force Find Video
+              </button>
+            </div>
+          </details>
+        </div>
+      )}
+
       {/* WordCard Styling Section */}
       {enabled && (
         <div className="bg-white bg-opacity-50 p-3 rounded border-2 border-black">
@@ -695,24 +736,28 @@ function MainPage({ onOpenTabs }) {
         </div>
       )}
 
-      {/* Subtitle Mode Toggle */}
-      {enabled && isYouTubePage && (
+      {/* Subtitle Mode Toggle - Show for all sites, but limit options on non-YouTube */}
+      {enabled && (
         <div className="bg-white bg-opacity-50 p-3 rounded border-2 border-black">
           <h3 className="text-black font-bold mb-2">Subtitle Mode</h3>
           <div className="flex flex-col gap-2">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="subtitleMode"
-                checked={subtitleMode === "api"}
-                onChange={() => handleSubtitleModeChange("api")}
-                className="w-4 h-4"
-              />
-              <span className="text-sm font-medium">API Subtitles</span>
-            </label>
-            <p className="text-xs text-gray-600 ml-6">
-              Fetch from Bundai API
-            </p>
+            {isYouTubePage && (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="subtitleMode"
+                    checked={subtitleMode === "api"}
+                    onChange={() => handleSubtitleModeChange("api")}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm font-medium">API Subtitles</span>
+                </label>
+                <p className="text-xs text-gray-600 ml-6">
+                  Fetch from Bundai API
+                </p>
+              </>
+            )}
 
             <label className="flex items-center gap-2 cursor-pointer mt-1">
               <input
@@ -728,20 +773,30 @@ function MainPage({ onOpenTabs }) {
               Upload your own subtitle file
             </p>
 
-            <label className="flex items-center gap-2 cursor-pointer mt-1">
-              <input
-                type="radio"
-                name="subtitleMode"
-                checked={subtitleMode === "auto"}
-                onChange={() => handleSubtitleModeChange("auto")}
-                className="w-4 h-4"
-              />
-              <span className="text-sm font-medium">Auto-Generated</span>
-            </label>
-            <p className="text-xs text-gray-600 ml-6">
-              Use server-fetched auto-generated subtitles
-            </p>
+            {isYouTubePage && (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer mt-1">
+                  <input
+                    type="radio"
+                    name="subtitleMode"
+                    checked={subtitleMode === "auto"}
+                    onChange={() => handleSubtitleModeChange("auto")}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm font-medium">Auto-Generated</span>
+                </label>
+                <p className="text-xs text-gray-600 ml-6">
+                  Use server-fetched auto-generated subtitles
+                </p>
+              </>
+            )}
           </div>
+          
+          {!isYouTubePage && (
+            <p className="text-xs text-orange-600 mt-2 italic">
+              Note: Only "Upload Subtitle" mode is available on this site.
+            </p>
+          )}
         </div>
       )}
 
@@ -928,10 +983,12 @@ function MainPage({ onOpenTabs }) {
             </div>
           )}
         </div>
-      ) : enabled && isYouTubePage && currentVideoId && subtitleMode === "user" ? (
+      ) : enabled && subtitleMode === "user" ? (
         <UserSubtitleUpload
           currentVideoId={currentVideoId}
+          currentUrl={currentUrl}
           isEnabled={enabled}
+          isYouTube={isYouTubePage}
         />
       ) : enabled && isYouTubePage && currentVideoId && subtitleMode === "auto" ? (
         <div className="mt-4 p-3 bg-blue-100 rounded">
@@ -942,7 +999,7 @@ function MainPage({ onOpenTabs }) {
             Using server-fetched auto-generated Japanese subtitles.
           </p>
         </div>
-      ) : enabled && isYouTubePage ? (
+      ) : enabled && isYouTubePage && !currentVideoId ? (
         <div className="mt-4 p-3 bg-red-100 rounded">
           <h3 className="text-red-700 font-bold">Video ID Not Found</h3>
           <p className="text-xs text-red-600 mt-1">
@@ -950,21 +1007,7 @@ function MainPage({ onOpenTabs }) {
             YouTube video page.
           </p>
         </div>
-      ) : enabled ? (
-        <div className="mt-4 p-3 bg-gray-100 rounded">
-          <h3 className="text-gray-700 font-bold">Not on YouTube</h3>
-          <p className="text-xs text-gray-600 mt-1">
-            Navigate to a YouTube video to load subtitles.
-          </p>
-        </div>
-      ) : (
-        <div className="mt-4 p-3 bg-gray-200 rounded">
-          <h3 className="text-gray-600 font-bold">Extension Disabled</h3>
-          <p className="text-xs text-gray-500 mt-1">
-            Enable the extension to use subtitle features.
-          </p>
-        </div>
-      )}
+      ) : null}
 
       <div className="text-black text-xs mt-1 opacity-70">
         To completely turn off the extension, disable it from{" "}
