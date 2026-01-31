@@ -941,3 +941,22 @@ label.toggle > input:checked ~ .toggle-knob {
 .df-btn-red:hover {
   background: #b91c1c;
 }
+
+/* Progressive character selection styles */
+.char-span {
+  display: inline;
+  cursor: pointer;
+  padding: 2px 1px;
+  border-radius: 2px;
+  transition: background-color 0.1s ease;
+}
+
+.char-span:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.matched-region {
+  background-color: rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}

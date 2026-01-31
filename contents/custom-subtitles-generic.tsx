@@ -67,6 +67,10 @@ interface SubtitleContainerStyles {
 
 interface Token {
   surface_form: string
+  basic_form: string
+  reading: string
+  pos: string
+  conjugated_form: string
 }
 
 declare global {
@@ -156,12 +160,20 @@ class GenericSubtitleContainer {
     mouseY: number
     isVisible: boolean
     isSticky: boolean
+    basicForm?: string
+    reading?: string
+    pos?: string
+    conjugatedForm?: string
   } = {
     word: "",
     mouseX: 0,
     mouseY: 0,
     isVisible: false,
-    isSticky: false
+    isSticky: false,
+    basicForm: "",
+    reading: "",
+    pos: "",
+    conjugatedForm: ""
   }
 
   private isJapaneseEnabled: boolean = true
@@ -750,6 +762,8 @@ class GenericSubtitleContainer {
     }
   }
 
+  private hoverTimeout: NodeJS.Timeout | null = null
+
   private processSubtitleElement(element: HTMLDivElement, text: string): void {
     if (
       !this.isJapaneseEnabled ||
@@ -769,85 +783,232 @@ class GenericSubtitleContainer {
     const tempContainer = document.createElement("div")
     tempContainer.style.display = "contents"
 
+    let globalCharIndex = 0
+
     tempContainer.innerHTML = tokens
-      .map(
-        (token, index) =>
-          `<span class="tokenized-word" data-word="${this.escapeHtml(token.surface_form)}" data-index="${index}">${this.escapeHtml(token.surface_form)}</span>`
-      )
+      .map((token, tokenIndex) => {
+        const chars = token.surface_form
+          .split("")
+          .map((char, charIndex) => {
+            const span = `<span class="char-span"
+                   data-char="${this.escapeHtml(char)}"
+                   data-char-index="${globalCharIndex + charIndex}"
+                   data-token-id="${tokenIndex}"
+                   data-token-word="${this.escapeHtml(token.surface_form)}"
+                   data-basic-form="${this.escapeHtml(token.basic_form)}"
+                   data-reading="${this.escapeHtml(token.reading)}"
+                   data-pos="${this.escapeHtml(token.pos)}">${this.escapeHtml(char)}</span>`
+            return span
+          })
+          .join("")
+        globalCharIndex += token.surface_form.length
+        return chars
+      })
       .join("")
 
-    tempContainer.querySelectorAll(".tokenized-word").forEach((wordElement) => {
-      const word = wordElement.getAttribute("data-word")
-      if (!word) return
+    const charSpans = tempContainer.querySelectorAll(".char-span")
+    charSpans.forEach((spanElement) => {
+      const charIndex = parseInt(
+        spanElement.getAttribute("data-char-index") || "0"
+      )
 
-      wordElement.addEventListener("mouseenter", (e) => {
-        const rect = (e.target as HTMLElement).getBoundingClientRect()
-        this.handleWordHover(word, rect.left + rect.width / 2, rect.top)
+      spanElement.addEventListener("mouseenter", (e) => {
+        if (this.hoverTimeout) clearTimeout(this.hoverTimeout)
+        this.hoverTimeout = setTimeout(() => {
+          this.handleCharacterHover(charIndex, (e as MouseEvent).clientX)
+        }, 20)
       })
 
-      wordElement.addEventListener("mouseleave", () => {
-        this.handleWordLeave()
+      spanElement.addEventListener("mouseleave", () => {
+        if (this.hoverTimeout) clearTimeout(this.hoverTimeout)
       })
 
-      wordElement.addEventListener("click", (e) => {
+      spanElement.addEventListener("click", (e) => {
         e.stopPropagation()
-        const rect = (e.target as HTMLElement).getBoundingClientRect()
-        this.handleWordClick(word, rect.left + rect.width / 2, rect.top)
-      })
-
-      const htmlElement = wordElement as HTMLElement
-      htmlElement.style.cursor = "pointer"
-      htmlElement.style.padding = "2px 4px"
-      htmlElement.style.borderRadius = "4px"
-      htmlElement.style.transition = "background-color 0.2s"
-      htmlElement.style.display = "inline"
-
-      htmlElement.addEventListener("mouseenter", () => {
-        htmlElement.style.backgroundColor = "rgba(255, 255, 255, 0.2)"
-      })
-
-      htmlElement.addEventListener("mouseleave", () => {
-        htmlElement.style.backgroundColor = "transparent"
+        this.findBestMatch(charIndex).then((match) => {
+          if (match) {
+            const startChar = document.querySelector(
+              `[data-char-index="${match.startIndex}"]`
+            ) as HTMLElement
+            const rect = startChar.getBoundingClientRect()
+            this.handleWordClickWithMetadata(
+              match.matchedText,
+              rect.left + rect.width / 2,
+              rect.top,
+              {
+                basicForm: match.entry.basic_form || match.matchedText,
+                reading: match.entry.reading || "",
+                pos: match.entry.pos || "",
+                conjugatedForm: ""
+              }
+            )
+          }
+        })
       })
     })
 
     element.innerHTML = ""
     element.appendChild(tempContainer)
+
+    element.addEventListener(
+      "mouseenter",
+      this.handleSubtitleMouseEnter.bind(this)
+    )
+    element.addEventListener("mouseleave", this.handleSubtitleLeave.bind(this))
+  }
+
+  private handleSubtitleMouseEnter(): void {
+    if (this.videoElement && typeof this.videoElement.pause === "function") {
+      this.videoElement.pause()
+    }
+  }
+
+  private handleSubtitleLeave(): void {
+    if (this.videoElement && typeof this.videoElement.play === "function") {
+      this.videoElement.play()
+    }
+    this.clearHighlights()
+  }
+
+  private async handleCharacterHover(
+    charIndex: number,
+    mouseX: number
+  ): Promise<void> {
+    const bestMatch = await this.findBestMatch(charIndex)
+
+    if (bestMatch) {
+      this.highlightRegion(bestMatch.startIndex, bestMatch.length)
+
+      const startChar = document.querySelector(
+        `[data-char-index="${bestMatch.startIndex}"]`
+      ) as HTMLElement
+      const rect = startChar.getBoundingClientRect()
+
+      this.wordCard = {
+        word: bestMatch.matchedText,
+        mouseX: rect.left + rect.width / 2,
+        mouseY: rect.top,
+        isVisible: true,
+        isSticky: false,
+        basicForm: bestMatch.entry.basic_form || bestMatch.matchedText,
+        reading: bestMatch.entry.reading || "",
+        pos: bestMatch.entry.pos || "",
+        conjugatedForm: ""
+      }
+      this.renderWordCard()
+    } else {
+      this.clearHighlights()
+      if (!this.wordCard.isSticky) {
+        this.wordCard.isVisible = false
+        this.renderWordCard()
+      }
+    }
+  }
+
+  private async findBestMatch(
+    startIndex: number,
+    maxLength: number = 10
+  ): Promise<{
+    startIndex: number
+    length: number
+    matchedText: string
+    entry: any
+  } | null> {
+    let chars = ""
+    let matchedEntry: any = null
+    let matchedLength = 0
+    const currentTokenId = document
+      .querySelector(`[data-char-index="${startIndex}"]`)
+      ?.getAttribute("data-token-id")
+
+    for (let i = 0; i < maxLength; i++) {
+      const targetIndex = startIndex + i
+      const span = document.querySelector(
+        `[data-char-index="${targetIndex}"]`
+      ) as HTMLElement
+
+      if (!span) break
+
+      const tokenId = span.getAttribute("data-token-id")
+
+      if (i > 0 && tokenId !== currentTokenId) {
+        break
+      }
+
+      chars += span.getAttribute("data-char") || ""
+
+      try {
+        const entry = await dictionaryDB.lookup(chars)
+        if (entry) {
+          matchedEntry = entry
+          matchedLength = i + 1
+        }
+      } catch (error) {
+        console.error("[Generic Subtitles] Lookup error:", error)
+      }
+    }
+
+    if (matchedLength > 0) {
+      return {
+        startIndex,
+        length: matchedLength,
+        matchedText: chars.substring(0, matchedLength),
+        entry: matchedEntry
+      }
+    }
+
+    return null
+  }
+
+  private highlightRegion(startIndex: number, length: number): void {
+    this.clearHighlights()
+
+    for (let i = 0; i < length; i++) {
+      const index = startIndex + i
+      const span = document.querySelector(
+        `[data-char-index="${index}"]`
+      ) as HTMLElement
+      if (span) {
+        span.classList.add("matched-region")
+      }
+    }
+  }
+
+  private clearHighlights(): void {
+    document.querySelectorAll(".matched-region").forEach((el) => {
+      el.classList.remove("matched-region")
+    })
+  }
+
+  private handleWordClickWithMetadata(
+    word: string,
+    mouseX: number,
+    mouseY: number,
+    metadata: {
+      basicForm: string
+      reading: string
+      pos: string
+      conjugatedForm: string
+    }
+  ): void {
+    this.wordCard = {
+      word,
+      mouseX,
+      mouseY,
+      isVisible: true,
+      isSticky: true,
+      basicForm: metadata.basicForm,
+      reading: metadata.reading,
+      pos: metadata.pos,
+      conjugatedForm: metadata.conjugatedForm
+    }
+    this.renderWordCard()
   }
 
   private escapeHtml(text: string): string {
     const div = document.createElement("div")
     div.textContent = text
     return div.innerHTML
-  }
-
-  private handleWordHover(word: string, mouseX: number, mouseY: number): void {
-    this.wordCard = {
-      word,
-      mouseX,
-      mouseY,
-      isVisible: true,
-      isSticky: false
-    }
-    this.renderWordCard()
-  }
-
-  private handleWordLeave(): void {
-    if (!this.wordCard.isSticky) {
-      this.wordCard.isVisible = false
-      this.renderWordCard()
-    }
-  }
-
-  private handleWordClick(word: string, mouseX: number, mouseY: number): void {
-    this.wordCard = {
-      word,
-      mouseX,
-      mouseY,
-      isVisible: true,
-      isSticky: true
-    }
-    this.renderWordCard()
   }
 
   private isJapaneseText(text: string): boolean {
