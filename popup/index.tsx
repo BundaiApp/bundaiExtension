@@ -886,8 +886,9 @@ function MainPage({ onOpenTabs }) {
                 </label>
                 <input
                   type="range"
-                  min="10"
+                  min="0"
                   max="50"
+                  step="1"
                   value={subtitleContainerStyles.verticalPosition}
                   onChange={(e) =>
                     handleSubtitleStyleChange(
