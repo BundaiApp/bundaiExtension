@@ -10,6 +10,7 @@ import DictionaryLoadingOverlay from "../components/DictionaryLoadingOverlay"
 import WordCard from "../components/WordCard"
 import client from "../graphql"
 import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
+import { deinflect } from "../services/deinflect"
 import dictionaryDB from "../services/dictionaryDB"
 
 export const getStyle = () => {
@@ -952,12 +953,7 @@ class GenericSubtitleContainer {
       chars += span.getAttribute("data-char") || ""
 
       try {
-        console.log(`[findBestMatch] Looking up: "${chars}"`)
         const entry = await dictionaryDB.lookup(chars)
-        console.log(
-          `[findBestMatch] Result for "${chars}":`,
-          entry ? "FOUND" : "NOT FOUND"
-        )
         if (entry) {
           matchedEntry = entry
           matchedLength = i + 1

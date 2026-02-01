@@ -10,6 +10,7 @@ import DictionaryLoadingOverlay from "../components/DictionaryLoadingOverlay"
 import WordCard from "../components/WordCard"
 import client from "../graphql"
 import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
+import { deinflect } from "../services/deinflect"
 import dictionaryDB from "../services/dictionaryDB"
 
 export const getStyle = () => {
@@ -823,9 +824,15 @@ class YouTubeSubtitleContainer {
       )
 
       spanElement.addEventListener("mouseenter", (e) => {
+        console.log("[Hover] Mouse entered character at index:", charIndex)
         if (this.hoverTimeout) clearTimeout(this.hoverTimeout)
         const hoverId = ++this.currentHoverId
+        console.log("[Hover] New hoverId:", hoverId)
         this.hoverTimeout = setTimeout(() => {
+          console.log(
+            "[Hover] Calling handleCharacterHover for index:",
+            charIndex
+          )
           this.handleCharacterHover(
             charIndex,
             (e as MouseEvent).clientX,
@@ -896,19 +903,28 @@ class YouTubeSubtitleContainer {
     mouseX: number,
     hoverId: number
   ): Promise<void> {
+    console.log(
+      "[Hover] handleCharacterHover called with hoverId:",
+      hoverId,
+      "currentHoverId:",
+      this.currentHoverId
+    )
+
     // Ignore stale hover results
     if (hoverId !== this.currentHoverId) {
+      console.log("[Hover] Ignoring stale hover")
       return
     }
 
+    console.log("[Hover] Finding best match for index:", charIndex)
     const bestMatch = await this.findBestMatch(charIndex)
-
-    // Check again after async call
-    if (hoverId !== this.currentHoverId) {
-      return
-    }
+    console.log(
+      "[Hover] Best match result:",
+      bestMatch ? `Found: ${bestMatch.matchedText}` : "null"
+    )
 
     if (bestMatch) {
+      console.log("[Hover] Setting wordCard with word:", bestMatch.matchedText)
       this.highlightRegion(bestMatch.startIndex, bestMatch.length)
 
       const startChar = document.querySelector(
@@ -927,8 +943,10 @@ class YouTubeSubtitleContainer {
         pos: "",
         conjugatedForm: ""
       }
+      console.log("[Hover] wordCard set, calling renderWordCard")
       this.renderWordCard()
     } else {
+      console.log("[Hover] No match found, clearing highlights")
       this.clearHighlights()
       if (!this.wordCard.isSticky) {
         this.wordCard.isVisible = false
@@ -956,15 +974,20 @@ class YouTubeSubtitleContainer {
         `[data-char-index="${targetIndex}"]`
       ) as HTMLElement
 
-      if (!span) break
+      if (!span) {
+        console.log("[findBestMatch] No span found at index:", targetIndex)
+        break
+      }
 
       chars += span.getAttribute("data-char") || ""
 
       try {
-        console.log(`[findBestMatch] Looking up: "${chars}"`)
+        console.log("[findBestMatch] Looking up:", chars)
         const entry = await dictionaryDB.lookup(chars)
         console.log(
-          `[findBestMatch] Result for "${chars}":`,
+          "[findBestMatch] Result for",
+          chars,
+          ":",
           entry ? "FOUND" : "NOT FOUND"
         )
         if (entry) {
@@ -976,6 +999,10 @@ class YouTubeSubtitleContainer {
       }
     }
 
+    console.log(
+      "[findBestMatch] Final result:",
+      matchedLength > 0 ? `Found: ${matchedEntry?.kanji?.[0]}` : "No match"
+    )
     if (matchedLength > 0) {
       return {
         startIndex,

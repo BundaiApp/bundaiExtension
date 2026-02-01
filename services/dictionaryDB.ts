@@ -13,7 +13,8 @@ class DictionaryDB {
   private readonly DB_VERSION = 1
   private readonly STORE_NAME = "jmdict"
   private initPromise: Promise<void> | null = null
-  private progressCallback: ((progress: number, total: number) => void) | null = null
+  private progressCallback: ((progress: number, total: number) => void) | null =
+    null
 
   private constructor() {}
 
@@ -50,13 +51,15 @@ class DictionaryDB {
 
       // Check if already populated
       const count = await this.getCount()
-      
+
       if (count === 0) {
         console.log("[DictionaryDB] Database empty, loading JMdict data...")
         await this.loadJMdictData()
         console.log("[DictionaryDB] Database populated successfully")
       } else {
-        console.log(`[DictionaryDB] Database already populated with ${count} entries`)
+        console.log(
+          `[DictionaryDB] Database already populated with ${count} entries`
+        )
       }
     } catch (error) {
       console.error("[DictionaryDB] Failed to initialize:", error)
@@ -82,7 +85,10 @@ class DictionaryDB {
           })
 
           // Create indexes for fast lookups
-          store.createIndex("kanji", "kanji", { unique: false, multiEntry: true })
+          store.createIndex("kanji", "kanji", {
+            unique: false,
+            multiEntry: true
+          })
           store.createIndex("kana", "kana", { unique: false, multiEntry: true })
         }
       }
@@ -106,7 +112,9 @@ class DictionaryDB {
     try {
       // Fetch the JSON file (web_accessible_resource)
       const response = await fetch(
-        chrome.runtime.getURL("assets/data/japanese/jmdict-simplified-flat-full.json")
+        chrome.runtime.getURL(
+          "assets/data/japanese/jmdict-simplified-flat-full.json"
+        )
       )
       const data: JMDictEntry[] = await response.json()
 
@@ -119,11 +127,11 @@ class DictionaryDB {
       // Process in batches with separate transactions
       for (let i = 0; i < data.length; i += batchSize) {
         const batch = data.slice(i, i + batchSize)
-        
+
         // Create new transaction for each batch
         const transaction = this.db.transaction([this.STORE_NAME], "readwrite")
         const store = transaction.objectStore(this.STORE_NAME)
-        
+
         for (const entry of batch) {
           store.add(entry)
         }
@@ -135,12 +143,12 @@ class DictionaryDB {
         })
 
         processed += batch.length
-        
+
         // Report progress
         if (this.progressCallback) {
           this.progressCallback(processed, total)
         }
-        
+
         console.log(`[DictionaryDB] Loaded ${processed}/${total} entries`)
       }
 
@@ -165,7 +173,14 @@ class DictionaryDB {
       const index = store.index("kanji")
       const request = index.get(word)
 
-      request.onsuccess = () => resolve(request.result || null)
+      request.onsuccess = () => {
+        const result = request.result
+        if (result && result.kanji?.includes(word)) {
+          resolve(result)
+        } else {
+          resolve(null)
+        }
+      }
       request.onerror = () => reject(request.error)
     })
   }
@@ -184,7 +199,14 @@ class DictionaryDB {
       const index = store.index("kana")
       const request = index.get(word)
 
-      request.onsuccess = () => resolve(request.result || null)
+      request.onsuccess = () => {
+        const result = request.result
+        if (result && result.kana?.includes(word)) {
+          resolve(result)
+        } else {
+          resolve(null)
+        }
+      }
       request.onerror = () => reject(request.error)
     })
   }
@@ -202,7 +224,10 @@ class DictionaryDB {
   /**
    * Get random entries for quiz generation
    */
-  public async getRandomEntries(count: number, excludeWord?: string): Promise<JMDictEntry[]> {
+  public async getRandomEntries(
+    count: number,
+    excludeWord?: string
+  ): Promise<JMDictEntry[]> {
     if (!this.db) {
       await this.initialize()
     }
@@ -221,7 +246,7 @@ class DictionaryDB {
 
         const results: JMDictEntry[] = []
         const randomKeys: number[] = []
-        
+
         // Generate random keys (IDs start from 1 in auto-increment)
         while (randomKeys.length < Math.min(count * 2, 20)) {
           const randomKey = Math.floor(Math.random() * total) + 1
@@ -243,8 +268,9 @@ class DictionaryDB {
             if (entry && entry.senses?.[0]?.gloss?.[0]) {
               // Exclude the current word if specified
               const entryWords = [...(entry.kanji || []), ...(entry.kana || [])]
-              const shouldExclude = excludeWord && entryWords.some(w => w === excludeWord)
-              
+              const shouldExclude =
+                excludeWord && entryWords.some((w) => w === excludeWord)
+
               if (!shouldExclude && results.length < count) {
                 results.push(entry)
               }
