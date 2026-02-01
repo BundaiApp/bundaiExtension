@@ -42,10 +42,7 @@
       "cookies"
     ],
     "host_permissions": [
-      "*://*.youtube.com/*",
-      "http://localhost:8000/*",
-      "http://localhost:3000/*",
-      "https://api.bundai.app/*"
+      "*://www.youtube.com/*"
     ],
     "content_security_policy": {
       "extension_pages": "script-src 'self'; object-src 'self'"
