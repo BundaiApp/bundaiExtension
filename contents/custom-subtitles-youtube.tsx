@@ -178,6 +178,9 @@ class YouTubeSubtitleContainer {
     conjugatedForm: ""
   }
 
+  private currentHoverId: number = 0
+  private hoverTimeout: NodeJS.Timeout | null = null
+
   private isJapaneseEnabled: boolean = true
   private isInitialized: boolean = false
   private wordCardStyles: WordCardStyles = {}
@@ -771,8 +774,6 @@ class YouTubeSubtitleContainer {
     }
   }
 
-  private hoverTimeout: NodeJS.Timeout | null = null
-
   private processSubtitleElement(element: HTMLDivElement, text: string): void {
     if (
       !this.isJapaneseEnabled ||
@@ -823,13 +824,24 @@ class YouTubeSubtitleContainer {
 
       spanElement.addEventListener("mouseenter", (e) => {
         if (this.hoverTimeout) clearTimeout(this.hoverTimeout)
+        const hoverId = ++this.currentHoverId
         this.hoverTimeout = setTimeout(() => {
-          this.handleCharacterHover(charIndex, (e as MouseEvent).clientX)
+          this.handleCharacterHover(
+            charIndex,
+            (e as MouseEvent).clientX,
+            hoverId
+          )
         }, 20)
       })
 
       spanElement.addEventListener("mouseleave", () => {
         if (this.hoverTimeout) clearTimeout(this.hoverTimeout)
+        ++this.currentHoverId
+        this.clearHighlights()
+        if (!this.wordCard.isSticky) {
+          this.wordCard.isVisible = false
+          this.renderWordCard()
+        }
       })
 
       spanElement.addEventListener("click", (e) => {
@@ -881,9 +893,20 @@ class YouTubeSubtitleContainer {
 
   private async handleCharacterHover(
     charIndex: number,
-    mouseX: number
+    mouseX: number,
+    hoverId: number
   ): Promise<void> {
+    // Ignore stale hover results
+    if (hoverId !== this.currentHoverId) {
+      return
+    }
+
     const bestMatch = await this.findBestMatch(charIndex)
+
+    // Check again after async call
+    if (hoverId !== this.currentHoverId) {
+      return
+    }
 
     if (bestMatch) {
       this.highlightRegion(bestMatch.startIndex, bestMatch.length)

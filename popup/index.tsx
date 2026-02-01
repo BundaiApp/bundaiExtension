@@ -1012,6 +1012,12 @@ function IndexPopup() {
   const [secureReady, setSecureReady] = useState(false)
   const [secureStorage] = useState(() => new SecureStorage())
 
+  // Check if running in development mode
+  const isDev =
+    process.env.NODE_ENV === "development" ||
+    window.location.hostname === "localhost" ||
+    window.location.href.includes("localhost")
+
   useEffect(() => {
     secureStorage
       .setPassword(process.env.PLASMO_SECURE_STORAGE_PASSWORD)
@@ -1020,10 +1026,18 @@ function IndexPopup() {
 
   useEffect(() => {
     if (!secureReady) return
+
+    // Skip login in development mode
+    if (isDev) {
+      console.log("[Bundai] Development mode - skipping login")
+      setLoggedIn(true)
+      return
+    }
+
     secureStorage.get("loggedIn").then((value) => {
       setLoggedIn(typeof value === "boolean" ? value : false)
     })
-  }, [secureReady, secureStorage])
+  }, [secureReady, secureStorage, isDev])
 
   const handleOpenTabs = () => {
     chrome.tabs.create({
