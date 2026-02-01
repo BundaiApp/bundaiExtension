@@ -890,9 +890,9 @@ class GenericSubtitleContainer {
         mouseY: rect.top,
         isVisible: true,
         isSticky: false,
-        basicForm: bestMatch.entry.basic_form || bestMatch.matchedText,
-        reading: bestMatch.entry.reading || "",
-        pos: bestMatch.entry.pos || "",
+        basicForm: bestMatch.entry.kanji?.[0] || bestMatch.matchedText,
+        reading: bestMatch.entry.kana?.[0] || "",
+        pos: "",
         conjugatedForm: ""
       }
       this.renderWordCard()
@@ -907,7 +907,7 @@ class GenericSubtitleContainer {
 
   private async findBestMatch(
     startIndex: number,
-    maxLength: number = 10
+    maxLength: number = 8
   ): Promise<{
     startIndex: number
     length: number
@@ -917,9 +917,6 @@ class GenericSubtitleContainer {
     let chars = ""
     let matchedEntry: any = null
     let matchedLength = 0
-    const currentTokenId = document
-      .querySelector(`[data-char-index="${startIndex}"]`)
-      ?.getAttribute("data-token-id")
 
     for (let i = 0; i < maxLength; i++) {
       const targetIndex = startIndex + i
@@ -929,16 +926,15 @@ class GenericSubtitleContainer {
 
       if (!span) break
 
-      const tokenId = span.getAttribute("data-token-id")
-
-      if (i > 0 && tokenId !== currentTokenId) {
-        break
-      }
-
       chars += span.getAttribute("data-char") || ""
 
       try {
+        console.log(`[findBestMatch] Looking up: "${chars}"`)
         const entry = await dictionaryDB.lookup(chars)
+        console.log(
+          `[findBestMatch] Result for "${chars}":`,
+          entry ? "FOUND" : "NOT FOUND"
+        )
         if (entry) {
           matchedEntry = entry
           matchedLength = i + 1
