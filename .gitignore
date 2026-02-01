@@ -32,3 +32,17 @@ chrome-*/
 
 # typescript
 .tsbuildinfo
+
+# database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# large data files
+data/
+*.log
+cache/
+tmp/
+*.ljson

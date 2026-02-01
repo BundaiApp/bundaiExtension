@@ -55,7 +55,8 @@
         "resources": [
           "tabs/*",
           "node_modules/kuromoji/dict/*.dat.gz",
-          "assets/data/japanese/jmdict-simplified-flat-full.json"
+          "assets/data/japanese/words.idx",
+          "assets/data/japanese/words.ljson"
         ],
         "matches": [
           "*://*.youtube.com/*"

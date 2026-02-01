@@ -11,7 +11,7 @@ import WordCard from "../components/WordCard"
 import client from "../graphql"
 import { ADD_FLASH_CARD_MUTATION } from "../graphql/mutations/addFlashCard.mutation"
 import { deinflect } from "../services/deinflect"
-import dictionaryDB from "../services/dictionaryDB"
+import dictionaryService from "../services/dictionary-service"
 
 export const getStyle = () => {
   const style = document.createElement("style")
@@ -450,11 +450,7 @@ class YouTubeSubtitleContainer {
         console.log("[YouTube Subtitles] Kuromoji tokenizer loaded")
       }
 
-      dictionaryDB.onProgress((progress, total) => {
-        showLoadingOverlay(progress, total)
-      })
-
-      await dictionaryDB.initialize()
+      await dictionaryService.initialize()
       console.log("[YouTube Subtitles] Dictionary database ready")
 
       hideLoadingOverlay()
@@ -983,15 +979,15 @@ class YouTubeSubtitleContainer {
 
       try {
         console.log("[findBestMatch] Looking up:", chars)
-        const entry = await dictionaryDB.lookup(chars)
+        const entry = await dictionaryService.lookupWithDeinflect(chars)
         console.log(
           "[findBestMatch] Result for",
           chars,
           ":",
-          entry ? "FOUND" : "NOT FOUND"
+          entry ? `FOUND (exact=${entry.isExact})` : "NOT FOUND"
         )
         if (entry) {
-          matchedEntry = entry
+          matchedEntry = entry.entry
           matchedLength = i + 1
         }
       } catch (error) {
@@ -1001,7 +997,9 @@ class YouTubeSubtitleContainer {
 
     console.log(
       "[findBestMatch] Final result:",
-      matchedLength > 0 ? `Found: ${matchedEntry?.kanji?.[0]}` : "No match"
+      matchedLength > 0
+        ? `Found: ${matchedEntry?.kanji?.[0] || chars}`
+        : "No match"
     )
     if (matchedLength > 0) {
       return {

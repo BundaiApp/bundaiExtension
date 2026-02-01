@@ -3,15 +3,12 @@ import React, { useEffect, useRef, useState } from "react"
 import { toRomaji } from "wanakana"
 
 import { useFlashcardService } from "../hooks/useFlashcardService"
+import dictionaryService, {
+  type DictionaryEntry
+} from "../services/dictionary-service"
 import dictionaryDB from "../services/dictionaryDB"
 
 import "../style.css"
-
-interface JMDictEntry {
-  kanji?: string[]
-  kana?: string[]
-  senses?: Array<{ gloss: string[] }>
-}
 
 interface WordCardStyles {
   backgroundColor?: string
@@ -51,7 +48,7 @@ const WordCard: React.FC<WordCardProps> = ({
   pos,
   conjugatedForm
 }) => {
-  const [entry, setEntry] = useState<JMDictEntry | null>(null)
+  const [entry, setEntry] = useState<DictionaryEntry | null>(null)
   const [isLoadingEntry, setIsLoadingEntry] = useState(true)
   const [cardHeight, setCardHeight] = useState<number>(0)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -68,12 +65,10 @@ const WordCard: React.FC<WordCardProps> = ({
 
   const generateQuizAnswers = async (
     currentWord: string,
-    currentEntry: JMDictEntry
+    currentEntry: DictionaryEntry
   ): Promise<string[]> => {
-    // Get the current word's first gloss (correct answer)
-    const correctAnswer = currentEntry.senses?.[0]?.gloss?.[0] || currentWord
+    const correctAnswer = currentEntry.meanings[0] || currentWord
 
-    // Get random entries from dictionary for alternative answers
     const alternativeAnswers: string[] = []
 
     try {
@@ -89,19 +84,16 @@ const WordCard: React.FC<WordCardProps> = ({
       console.error("[WordCard] Failed to get random entries:", error)
     }
 
-    // If we don't have enough alternatives, add fallback options
     while (alternativeAnswers.length < 3) {
       alternativeAnswers.push(`Option ${alternativeAnswers.length + 1}`)
     }
 
-    // Shuffling the answers using fisher yates algorithm
     const allAnswers = [correctAnswer, ...alternativeAnswers.slice(0, 3)]
     for (let i = allAnswers.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
       ;[allAnswers[i], allAnswers[j]] = [allAnswers[j], allAnswers[i]]
     }
 
-    // Return the shuffled array
     return allAnswers
   }
   const handleAddFlashcard = async () => {
@@ -117,10 +109,10 @@ const WordCard: React.FC<WordCardProps> = ({
     console.log("[WordCard] Starting to add flashcard for:", word)
 
     try {
-      const kanjiName = entry.kanji?.[0] || word
-      const hiragana = entry.kana?.[0] || word
+      const kanjiName = entry.entry.kanji?.[0] || word
+      const hiragana = entry.entry.kana?.[0] || word
       const meanings =
-        entry.senses?.flatMap((s) => s.gloss).filter(Boolean) || []
+        entry.entry.senses?.flatMap((s) => s.gloss).filter(Boolean) || []
 
       console.log("[WordCard] Generating quiz answers...")
       const quizAnswers = await generateQuizAnswers(word, entry)
@@ -159,31 +151,17 @@ const WordCard: React.FC<WordCardProps> = ({
       if (!word) return
 
       try {
-        let foundEntry: JMDictEntry | null = null
-
-        if (basicForm && basicForm !== word) {
-          console.log("[WordCard] Trying basic_form lookup:", basicForm)
-          foundEntry = await dictionaryDB.lookup(basicForm)
-        }
-
-        if (!foundEntry && reading && reading !== word) {
-          console.log("[WordCard] Trying reading lookup:", reading)
-          foundEntry = await dictionaryDB.lookupByKana(reading)
-        }
-
-        if (!foundEntry) {
-          console.log("[WordCard] Falling back to word lookup:", word)
-          foundEntry = await dictionaryDB.lookup(word)
-        }
+        console.log("[WordCard] Looking up word:", word)
+        const result = await dictionaryService.lookupWithDeinflect(word)
 
         console.log("[WordCard] Lookup result:", {
           word,
-          basicForm,
-          reading,
-          found: !!foundEntry
+          found: !!result,
+          isExact: result?.isExact,
+          deinflectReasons: result?.deinflectReasons
         })
 
-        setEntry(foundEntry || null)
+        setEntry(result)
       } catch (error) {
         console.error("[WordCard] Failed to lookup word:", error)
         setEntry(null)
@@ -200,7 +178,7 @@ const WordCard: React.FC<WordCardProps> = ({
       setIsLoadingEntry(false)
       setEntry(null)
     }
-  }, [word, basicForm, reading])
+  }, [word])
 
   const cardWidth = 380
   const margin = 16
@@ -231,7 +209,7 @@ const WordCard: React.FC<WordCardProps> = ({
 
   let romaji = ""
   try {
-    romaji = entry?.kana?.[0] ? toRomaji(entry.kana[0]) : toRomaji(word)
+    romaji = entry?.reading ? toRomaji(entry.reading) : toRomaji(word)
   } catch {
     romaji = ""
   }
@@ -303,11 +281,11 @@ const WordCard: React.FC<WordCardProps> = ({
         ) : entry ? (
           <>
             {/* Kanji */}
-            {entry.kanji?.length > 0 && (
+            {entry.entry.kanji?.length > 0 && (
               <div className="wordcard-section">
                 <div className="wordcard-section-title">Kanji:</div>
                 <div className="wordcard-tags">
-                  {entry.kanji
+                  {entry.entry.kanji
                     .filter(
                       (k) => typeof k === "string" && /[\u4E00-\u9FAF]/.test(k)
                     )
@@ -321,11 +299,11 @@ const WordCard: React.FC<WordCardProps> = ({
             )}
 
             {/* Meanings */}
-            {entry.senses?.length > 0 && (
+            {entry.entry.senses?.length > 0 && (
               <div className="wordcard-section">
                 <div className="wordcard-section-title">Meanings:</div>
                 <div className="wordcard-tags">
-                  {entry.senses
+                  {entry.entry.senses
                     .flatMap((sense) => sense.gloss)
                     .filter(Boolean)
                     .slice(0, 3)

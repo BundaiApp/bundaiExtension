@@ -21,7 +21,7 @@ export const getStyle = () => {
 
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"],
-  exclude_matches: ["*://www.youtube.com/watch*"],
+  exclude_matches: ["<all_urls>"],
   all_frames: false
 }
 
