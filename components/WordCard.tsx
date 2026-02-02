@@ -1,6 +1,6 @@
 // components/WordCard.tsx
 import React, { useEffect, useRef, useState } from "react"
-import { toRomaji } from "wanakana"
+import { toHiragana, toRomaji } from "wanakana"
 
 import { useFlashcardService } from "../hooks/useFlashcardService"
 import dictionaryService, {
@@ -218,7 +218,14 @@ const WordCard: React.FC<WordCardProps> = ({
 
   let romaji = ""
   try {
-    const romajiSource = reading || entry?.reading || word
+    let romajiSource = entry?.reading || reading || word
+    if (reading && entry?.entry.kana?.length) {
+      const normalized = toHiragana(reading)
+      const matchedKana = entry.entry.kana.find((kana) => kana === normalized)
+      if (matchedKana) {
+        romajiSource = matchedKana
+      }
+    }
     romaji = toRomaji(romajiSource)
   } catch {
     romaji = ""

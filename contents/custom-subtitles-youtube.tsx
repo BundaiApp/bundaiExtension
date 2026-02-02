@@ -1057,6 +1057,11 @@ class YouTubeSubtitleContainer {
     const startTokenId = startSpan?.getAttribute("data-token-id") || undefined
     let spansMultipleTokens = false
     let hasAuxOrParticle = false
+    const tokenSurfaceLength = tokenSurface?.length || 0
+    const isSingleKanji =
+      tokenSurfaceLength === 1 &&
+      !!tokenSurface &&
+      /[\u4E00-\u9FFF]/.test(tokenSurface)
 
     for (let i = 0; i < maxLength; i++) {
       const targetIndex = startIndex + i
@@ -1084,7 +1089,8 @@ class YouTubeSubtitleContainer {
         console.log("[findBestMatch] Looking up:", chars)
         const contextBefore = this.getContextBefore(startIndex)
         const contextAfter = this.getContextAfter(startIndex + i + 1, 2)
-        const readingForLookup = spansMultipleTokens ? undefined : tokenReading
+        const readingForLookup =
+          spansMultipleTokens || isSingleKanji ? undefined : tokenReading
         const posForLookup = spansMultipleTokens ? undefined : tokenPos
         const posDetailForLookup = spansMultipleTokens
           ? undefined
@@ -1119,6 +1125,8 @@ class YouTubeSubtitleContainer {
         : "No match"
     )
     if (matchedLength > 0) {
+      const useTokenMeta =
+        tokenSurfaceLength > 0 && matchedLength === tokenSurfaceLength
       if (matchedLength < chars.length && hasAuxOrParticle) {
         return {
           startIndex,
@@ -1142,10 +1150,10 @@ class YouTubeSubtitleContainer {
         entry: matchedEntry,
         lookupWord: chars.substring(0, matchedLength),
         metadata: {
-          basicForm: tokenBasicForm,
-          reading: tokenReading,
-          pos: tokenPos,
-          posDetail1: tokenPosDetail1,
+          basicForm: useTokenMeta ? tokenBasicForm : undefined,
+          reading: useTokenMeta ? tokenReading : undefined,
+          pos: useTokenMeta ? tokenPos : undefined,
+          posDetail1: useTokenMeta ? tokenPosDetail1 : undefined,
           conjugatedForm: tokenConjugatedForm
         }
       }
