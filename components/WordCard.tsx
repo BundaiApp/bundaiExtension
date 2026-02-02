@@ -215,7 +215,7 @@ const WordCard: React.FC<WordCardProps> = ({
 
   let romaji = ""
   try {
-    const romajiSource = entry?.reading || reading || word
+    const romajiSource = reading || entry?.reading || word
     romaji = toRomaji(romajiSource)
   } catch {
     romaji = ""

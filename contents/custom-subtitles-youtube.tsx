@@ -981,33 +981,8 @@ class YouTubeSubtitleContainer {
       conjugatedForm?: string
     }
   } | null> {
-    const candidates = this.getCandidateStartIndexes(startIndex)
-    let bestMatch: {
-      startIndex: number
-      length: number
-      matchedText: string
-      entry: any
-      metadata?: {
-        basicForm?: string
-        reading?: string
-        pos?: string
-        posDetail1?: string
-        conjugatedForm?: string
-      }
-    } | null = null
-
-    for (const candidateStartIndex of candidates) {
-      const match = await this.findMatchFromStart(candidateStartIndex, maxLength)
-      if (!match) {
-        continue
-      }
-
-      if (!bestMatch || match.length > bestMatch.length) {
-        bestMatch = match
-      }
-    }
-
-    return bestMatch
+    const start = this.getTokenStartIndex(startIndex)
+    return this.findMatchFromStart(start, maxLength)
   }
 
   private async findMatchFromStart(
@@ -1040,6 +1015,7 @@ class YouTubeSubtitleContainer {
       startSpan?.getAttribute("data-basic-form") || undefined
     const tokenConjugatedForm =
       startSpan?.getAttribute("data-conjugated-form") || undefined
+    const tokenSurface = startSpan?.getAttribute("data-token-word") || undefined
     const startTokenId = startSpan?.getAttribute("data-token-id") || undefined
     let spansMultipleTokens = false
 
@@ -1057,6 +1033,12 @@ class YouTubeSubtitleContainer {
       const tokenId = span.getAttribute("data-token-id") || undefined
       if (startTokenId && tokenId && tokenId !== startTokenId) {
         spansMultipleTokens = true
+        if (
+          matchedLength > 0 &&
+          this.shouldStopAtTokenBoundary(span.getAttribute("data-pos") || "")
+        ) {
+          break
+        }
       }
 
       chars += span.getAttribute("data-char") || ""
@@ -1065,10 +1047,15 @@ class YouTubeSubtitleContainer {
         console.log("[findBestMatch] Looking up:", chars)
         const contextBefore = this.getContextBefore(startIndex)
         const contextAfter = this.getContextAfter(startIndex + i + 1, 2)
+        const readingForLookup = spansMultipleTokens ? undefined : tokenReading
+        const posForLookup = spansMultipleTokens ? undefined : tokenPos
+        const posDetailForLookup = spansMultipleTokens
+          ? undefined
+          : tokenPosDetail1
         const entry = await dictionaryService.lookupWithDeinflect(chars, {
-          reading: tokenReading,
-          pos: tokenPos,
-          posDetail1: tokenPosDetail1,
+          reading: readingForLookup,
+          pos: posForLookup,
+          posDetail1: posDetailForLookup,
           contextBefore,
           contextAfter,
           spansMultipleTokens
@@ -1110,6 +1097,39 @@ class YouTubeSubtitleContainer {
       }
     }
 
+    if (tokenBasicForm && tokenBasicForm.length > 1) {
+      try {
+        const contextBefore = this.getContextBefore(startIndex)
+        const contextAfter = this.getContextAfter(startIndex + 1, 2)
+        const entry = await dictionaryService.lookupWithDeinflect(
+          tokenBasicForm,
+          {
+            reading: tokenReading,
+            contextBefore,
+            contextAfter,
+            spansMultipleTokens: false
+          }
+        )
+        if (entry) {
+          return {
+            startIndex,
+            length: tokenSurface?.length || 1,
+            matchedText: tokenSurface || tokenBasicForm,
+            entry: entry.entry,
+            metadata: {
+              basicForm: tokenBasicForm,
+              reading: tokenReading,
+              pos: tokenPos,
+              posDetail1: tokenPosDetail1,
+              conjugatedForm: tokenConjugatedForm
+            }
+          }
+        }
+      } catch (error) {
+        console.error("[YouTube Subtitles] Lookup error:", error)
+      }
+    }
+
     return null
   }
 
@@ -1140,69 +1160,12 @@ class YouTubeSubtitleContainer {
     return startIndex
   }
 
-  private getCandidateStartIndexes(charIndex: number): number[] {
-    const startIndex = this.getTokenStartIndex(charIndex)
-    const candidates = [startIndex]
-    const span = document.querySelector(
-      `[data-char-index="${charIndex}"]`
-    ) as HTMLElement | null
-    const pos = span?.getAttribute("data-pos") || ""
-
-    if (this.shouldUsePreviousToken(pos)) {
-      const previousStartIndex = this.getPreviousTokenStartIndex(startIndex)
-      if (
-        previousStartIndex !== null &&
-        !candidates.includes(previousStartIndex)
-      ) {
-        candidates.push(previousStartIndex)
-      }
-    }
-
-    return candidates
-  }
-
-  private getPreviousTokenStartIndex(startIndex: number): number | null {
-    if (startIndex <= 0) {
-      return null
-    }
-
-    const prevSpan = document.querySelector(
-      `[data-char-index="${startIndex - 1}"]`
-    ) as HTMLElement | null
-    if (!prevSpan) {
-      return null
-    }
-
-    const prevTokenId = prevSpan.getAttribute("data-token-id")
-    if (!prevTokenId) {
-      return null
-    }
-
-    let prevStartIndex = startIndex - 1
-    while (prevStartIndex > 0) {
-      const span = document.querySelector(
-        `[data-char-index="${prevStartIndex - 1}"]`
-      ) as HTMLElement | null
-      if (!span || span.getAttribute("data-token-id") !== prevTokenId) {
-        break
-      }
-      prevStartIndex -= 1
-    }
-
-    return prevStartIndex
-  }
-
-  private shouldUsePreviousToken(pos: string): boolean {
+  private shouldStopAtTokenBoundary(pos: string): boolean {
     if (!pos) {
       return false
     }
 
-    return (
-      pos.includes("助詞") ||
-      pos.includes("助動詞") ||
-      pos.includes("接尾") ||
-      pos.includes("記号")
-    )
+    return pos.includes("助詞") || pos.includes("助動詞")
   }
 
   private getContextBefore(startIndex: number): string {
