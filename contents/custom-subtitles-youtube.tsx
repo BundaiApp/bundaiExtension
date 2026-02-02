@@ -160,6 +160,7 @@ class YouTubeSubtitleContainer {
 
   private wordCard: {
     word: string
+    lookupWord?: string
     mouseX: number
     mouseY: number
     isVisible: boolean
@@ -872,7 +873,8 @@ class YouTubeSubtitleContainer {
                 reading: match.metadata?.reading || "",
                 pos: match.metadata?.pos || "",
                 posDetail1: match.metadata?.posDetail1,
-                conjugatedForm: match.metadata?.conjugatedForm || ""
+                conjugatedForm: match.metadata?.conjugatedForm || "",
+                lookupWord: match.lookupWord
               }
             )
           }
@@ -940,6 +942,7 @@ class YouTubeSubtitleContainer {
 
       this.wordCard = {
         word: bestMatch.matchedText,
+        lookupWord: bestMatch.lookupWord,
         mouseX: rect.left + rect.width / 2,
         mouseY: rect.top,
         isVisible: true,
@@ -972,6 +975,7 @@ class YouTubeSubtitleContainer {
     startIndex: number
     length: number
     matchedText: string
+    lookupWord?: string
     entry: any
     metadata?: {
       basicForm?: string
@@ -981,8 +985,41 @@ class YouTubeSubtitleContainer {
       conjugatedForm?: string
     }
   } | null> {
-    const start = this.getTokenStartIndex(startIndex)
-    return this.findMatchFromStart(start, maxLength)
+    const candidates = this.getCandidateStartIndexes(startIndex)
+    let bestMatch: {
+      startIndex: number
+      length: number
+      matchedText: string
+      lookupWord?: string
+      entry: any
+      metadata?: {
+        basicForm?: string
+        reading?: string
+        pos?: string
+        posDetail1?: string
+        conjugatedForm?: string
+      }
+    } | null = null
+
+    for (const candidateStartIndex of candidates) {
+      const limit = Math.min(
+        maxLength,
+        startIndex - candidateStartIndex + 1
+      )
+      if (limit <= 0) {
+        continue
+      }
+      const match = await this.findMatchFromStart(candidateStartIndex, limit)
+      if (!match) {
+        continue
+      }
+
+      if (!bestMatch || match.length > bestMatch.length) {
+        bestMatch = match
+      }
+    }
+
+    return bestMatch
   }
 
   private async findMatchFromStart(
@@ -992,6 +1029,7 @@ class YouTubeSubtitleContainer {
     startIndex: number
     length: number
     matchedText: string
+    lookupWord?: string
     entry: any
     metadata?: {
       basicForm?: string
@@ -1018,6 +1056,7 @@ class YouTubeSubtitleContainer {
     const tokenSurface = startSpan?.getAttribute("data-token-word") || undefined
     const startTokenId = startSpan?.getAttribute("data-token-id") || undefined
     let spansMultipleTokens = false
+    let hasAuxOrParticle = false
 
     for (let i = 0; i < maxLength; i++) {
       const targetIndex = startIndex + i
@@ -1033,11 +1072,9 @@ class YouTubeSubtitleContainer {
       const tokenId = span.getAttribute("data-token-id") || undefined
       if (startTokenId && tokenId && tokenId !== startTokenId) {
         spansMultipleTokens = true
-        if (
-          matchedLength > 0 &&
-          this.shouldStopAtTokenBoundary(span.getAttribute("data-pos") || "")
-        ) {
-          break
+        const pos = span.getAttribute("data-pos") || ""
+        if (pos.includes("助詞") || pos.includes("助動詞")) {
+          hasAuxOrParticle = true
         }
       }
 
@@ -1082,11 +1119,28 @@ class YouTubeSubtitleContainer {
         : "No match"
     )
     if (matchedLength > 0) {
+      if (matchedLength < chars.length && hasAuxOrParticle) {
+        return {
+          startIndex,
+          length: chars.length,
+          matchedText: chars,
+          lookupWord: tokenBasicForm || chars.substring(0, matchedLength),
+          entry: matchedEntry,
+          metadata: {
+            basicForm: tokenBasicForm,
+            reading: tokenReading,
+            pos: tokenPos,
+            posDetail1: tokenPosDetail1,
+            conjugatedForm: tokenConjugatedForm
+          }
+        }
+      }
       return {
         startIndex,
         length: matchedLength,
         matchedText: chars.substring(0, matchedLength),
         entry: matchedEntry,
+        lookupWord: chars.substring(0, matchedLength),
         metadata: {
           basicForm: tokenBasicForm,
           reading: tokenReading,
@@ -1113,8 +1167,9 @@ class YouTubeSubtitleContainer {
         if (entry) {
           return {
             startIndex,
-            length: tokenSurface?.length || 1,
-            matchedText: tokenSurface || tokenBasicForm,
+            length: chars.length || tokenSurface?.length || tokenBasicForm.length,
+            matchedText: chars || tokenSurface || tokenBasicForm,
+            lookupWord: tokenBasicForm,
             entry: entry.entry,
             metadata: {
               basicForm: tokenBasicForm,
@@ -1160,7 +1215,59 @@ class YouTubeSubtitleContainer {
     return startIndex
   }
 
-  private shouldStopAtTokenBoundary(pos: string): boolean {
+  private getCandidateStartIndexes(charIndex: number): number[] {
+    const startIndex = this.getTokenStartIndex(charIndex)
+    const candidates = [startIndex]
+    const span = document.querySelector(
+      `[data-char-index="${charIndex}"]`
+    ) as HTMLElement | null
+    const pos = span?.getAttribute("data-pos") || ""
+
+    if (this.shouldUsePreviousToken(pos)) {
+      const previousStartIndex = this.getPreviousTokenStartIndex(startIndex)
+      if (
+        previousStartIndex !== null &&
+        !candidates.includes(previousStartIndex)
+      ) {
+        candidates.push(previousStartIndex)
+      }
+    }
+
+    return candidates
+  }
+
+  private getPreviousTokenStartIndex(startIndex: number): number | null {
+    if (startIndex <= 0) {
+      return null
+    }
+
+    const prevSpan = document.querySelector(
+      `[data-char-index="${startIndex - 1}"]`
+    ) as HTMLElement | null
+    if (!prevSpan) {
+      return null
+    }
+
+    const prevTokenId = prevSpan.getAttribute("data-token-id")
+    if (!prevTokenId) {
+      return null
+    }
+
+    let prevStartIndex = startIndex - 1
+    while (prevStartIndex > 0) {
+      const span = document.querySelector(
+        `[data-char-index="${prevStartIndex - 1}"]`
+      ) as HTMLElement | null
+      if (!span || span.getAttribute("data-token-id") !== prevTokenId) {
+        break
+      }
+      prevStartIndex -= 1
+    }
+
+    return prevStartIndex
+  }
+
+  private shouldUsePreviousToken(pos: string): boolean {
     if (!pos) {
       return false
     }
@@ -1240,10 +1347,12 @@ class YouTubeSubtitleContainer {
       pos: string
       posDetail1?: string
       conjugatedForm: string
+      lookupWord?: string
     }
   ): void {
     this.wordCard = {
       word,
+      lookupWord: metadata.lookupWord,
       mouseX,
       mouseY,
       isVisible: true,
@@ -1267,10 +1376,12 @@ class YouTubeSubtitleContainer {
       pos: string
       posDetail1?: string
       conjugatedForm: string
+      lookupWord?: string
     }
   ): void {
     this.wordCard = {
       word,
+      lookupWord: metadata.lookupWord,
       mouseX,
       mouseY,
       isVisible: true,
@@ -1829,6 +1940,7 @@ class YouTubeSubtitleContainer {
 const WordCardManager: React.FC<{
   wordCard: {
     word: string
+    lookupWord?: string
     mouseX: number
     mouseY: number
     isVisible: boolean
@@ -1846,6 +1958,7 @@ const WordCardManager: React.FC<{
   return (
     <WordCard
       word={wordCard.word}
+      lookupWord={wordCard.lookupWord}
       mouseX={wordCard.mouseX}
       mouseY={wordCard.mouseY}
       isVisible={wordCard.isVisible}

@@ -21,6 +21,7 @@ interface WordCardStyles {
 
 interface WordCardProps {
   word: string
+  lookupWord?: string
   mouseX: number
   mouseY: number
   isVisible: boolean
@@ -37,6 +38,7 @@ interface WordCardProps {
 
 const WordCard: React.FC<WordCardProps> = ({
   word,
+  lookupWord,
   mouseX,
   mouseY,
   isVisible,
@@ -63,7 +65,7 @@ const WordCard: React.FC<WordCardProps> = ({
     resetState
   } = useFlashcardService()
 
-  useEffect(() => resetState(), [word, resetState])
+  useEffect(() => resetState(), [word, lookupWord, resetState])
 
   const generateQuizAnswers = async (
     currentWord: string,
@@ -153,15 +155,16 @@ const WordCard: React.FC<WordCardProps> = ({
       if (!word) return
 
       try {
-        console.log("[WordCard] Looking up word:", word)
-        const result = await dictionaryService.lookupWithDeinflect(word, {
+        const targetWord = lookupWord || word
+        console.log("[WordCard] Looking up word:", targetWord)
+        const result = await dictionaryService.lookupWithDeinflect(targetWord, {
           reading,
           pos,
           posDetail1
         })
 
         console.log("[WordCard] Lookup result:", {
-          word,
+          word: targetWord,
           found: !!result,
           isExact: result?.isExact,
           deinflectReasons: result?.deinflectReasons
@@ -184,7 +187,7 @@ const WordCard: React.FC<WordCardProps> = ({
       setIsLoadingEntry(false)
       setEntry(null)
     }
-  }, [word])
+  }, [word, lookupWord, reading, pos, posDetail1])
 
   const cardWidth = 380
   const margin = 16
