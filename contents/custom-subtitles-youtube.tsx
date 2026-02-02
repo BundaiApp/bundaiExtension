@@ -963,6 +963,10 @@ class YouTubeSubtitleContainer {
     let chars = ""
     let matchedEntry: any = null
     let matchedLength = 0
+    const startSpan = document.querySelector(
+      `[data-char-index="${startIndex}"]`
+    ) as HTMLElement | null
+    const tokenReading = startSpan?.getAttribute("data-reading") || undefined
 
     for (let i = 0; i < maxLength; i++) {
       const targetIndex = startIndex + i
@@ -979,7 +983,9 @@ class YouTubeSubtitleContainer {
 
       try {
         console.log("[findBestMatch] Looking up:", chars)
-        const entry = await dictionaryService.lookupWithDeinflect(chars)
+        const entry = await dictionaryService.lookupWithDeinflect(chars, {
+          reading: tokenReading
+        })
         console.log(
           "[findBestMatch] Result for",
           chars,

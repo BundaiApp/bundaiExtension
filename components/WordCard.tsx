@@ -152,7 +152,9 @@ const WordCard: React.FC<WordCardProps> = ({
 
       try {
         console.log("[WordCard] Looking up word:", word)
-        const result = await dictionaryService.lookupWithDeinflect(word)
+        const result = await dictionaryService.lookupWithDeinflect(word, {
+          reading
+        })
 
         console.log("[WordCard] Lookup result:", {
           word,

@@ -56,21 +56,22 @@ def extract_words(entry: dict) -> List[str]:
     return list(words)
 
 
-def create_word_list(entries: List[dict]) -> Dict[str, dict]:
-    """Create map of unique words to their entries."""
+def create_word_list(entries: List[dict]) -> Dict[str, List[dict]]:
+    """Create map of unique words to their entries (preserve all entries)."""
     print("Extracting words...")
-    word_map: Dict[str, dict] = {}
+    word_map: Dict[str, List[dict]] = {}
     
     for entry in entries:
         for word in extract_words(entry):
             if word not in word_map:
-                word_map[word] = entry
+                word_map[word] = []
+            word_map[word].append(entry)
     
     print(f"Found {len(word_map)} unique words")
     return word_map
 
 
-def create_index_and_data(word_map: Dict[str, dict]) -> Tuple[bytes, bytes]:
+def create_index_and_data(word_map: Dict[str, List[dict]]) -> Tuple[bytes, bytes]:
     """Create binary index file and line-delimited JSON data file."""
     print("Creating index and data files...")
     
@@ -79,25 +80,24 @@ def create_index_and_data(word_map: Dict[str, dict]) -> Tuple[bytes, bytes]:
     
     # Build data file content
     # Format: "word\t{entry_json}\n"
-    lines = []
+    lines: List[bytes] = []
     for word in sorted_words:
-        entry = word_map[word]
-        entry_json = json.dumps(entry, ensure_ascii=False)
-        lines.append(f"{word}\t{entry_json}\n")
-    
-    data_content = "".join(lines).encode("utf-8")
+        entries = word_map[word]
+        entry_json = json.dumps(entries, ensure_ascii=False)
+        line = f"{word}\t{entry_json}\n".encode("utf-8")
+        lines.append(line)
+
+    data_content = b"".join(lines)
     
     # Build index file
     # Format: [4 bytes: count][8 bytes per entry: offset, length]
     index_content = struct.pack("<I", len(sorted_words))
     
     offset = 0
-    for word in sorted_words:
+    for word, line in zip(sorted_words, lines):
         word_bytes = word.encode("utf-8")
-        line_length = len(word_bytes) + 1  # +1 for tab or newline
-        
         index_content += struct.pack("<II", offset, len(word_bytes))
-        offset += line_length + len(json.dumps(word_map[word], ensure_ascii=False).encode("utf-8")) + 1  # +1 for newline
+        offset += len(line)
     
     return index_content, data_content
 

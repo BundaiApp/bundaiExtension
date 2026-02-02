@@ -16,7 +16,7 @@ export interface JMDictEntry {
 }
 
 export interface LookupResult {
-  entry: JMDictEntry
+  entries: JMDictEntry[]
   isExact: boolean
   deinflectReasons?: string[]
 }
@@ -120,7 +120,8 @@ export class FlatFileDictionary {
       const length = this.indexData[mid * 2 + 1]
 
       const midWord = this.readWordAt(offset, length)
-      const comparison = word.localeCompare(midWord)
+      const comparison =
+        word === midWord ? 0 : word < midWord ? -1 : 1
 
       console.log(
         `[FlatFileDictionary] binarySearch mid=${mid}, offset=${offset}, length=${length}, midWord="${midWord}", comparison=${comparison}`
@@ -149,7 +150,7 @@ export class FlatFileDictionary {
     return new TextDecoder("utf-8").decode(bytes)
   }
 
-  private readEntryAt(lineOffset: number): JMDictEntry | null {
+  private readEntriesAt(lineOffset: number): JMDictEntry[] | null {
     if (!this.wordData) {
       throw new Error("Data file not loaded")
     }
@@ -178,20 +179,24 @@ export class FlatFileDictionary {
     const entryJson = line.slice(tabIndex + 1)
 
     try {
-      return JSON.parse(entryJson)
+      const parsed = JSON.parse(entryJson)
+      if (Array.isArray(parsed)) {
+        return parsed
+      }
+      return [parsed]
     } catch (e) {
       console.error("[FlatFileDictionary] Failed to parse entry:", e)
       return null
     }
   }
 
-  public async lookup(word: string): Promise<JMDictEntry | null> {
+  public async lookup(word: string): Promise<JMDictEntry[] | null> {
     await this.initialize()
 
     const cacheKey = `exact:${word}`
     const cached = this.cache.get(cacheKey)
     if (cached) {
-      return cached.entry
+      return cached.entries
     }
 
     const index = this.binarySearch(word)
@@ -202,10 +207,10 @@ export class FlatFileDictionary {
       const dictWord = this.readWordAt(offset, length)
 
       if (dictWord === word) {
-        const entry = this.readEntryAt(offset)
-        if (entry) {
-          this.addToCache(cacheKey, { entry, isExact: true })
-          return entry
+        const entries = this.readEntriesAt(offset)
+        if (entries) {
+          this.addToCache(cacheKey, { entries, isExact: true })
+          return entries
         }
       }
     }
@@ -225,9 +230,9 @@ export class FlatFileDictionary {
       return cached
     }
 
-    const exactResult = await this.lookup(word)
-    if (exactResult) {
-      return { entry: exactResult, isExact: true }
+    const exactEntries = await this.lookup(word)
+    if (exactEntries) {
+      return { entries: exactEntries, isExact: true }
     }
 
     const deinflectedForms = deinflectFn(word)
@@ -235,11 +240,11 @@ export class FlatFileDictionary {
     for (const form of deinflectedForms) {
       if (form.word === word || form.word.length < 2) continue
 
-      const deinflectedResult = await this.lookup(form.word)
+      const deinflectedEntries = await this.lookup(form.word)
 
-      if (deinflectedResult) {
+      if (deinflectedEntries) {
         const result: LookupResult = {
-          entry: deinflectedResult,
+          entries: deinflectedEntries,
           isExact: false,
           deinflectReasons: form.reasons
         }
@@ -259,11 +264,11 @@ export class FlatFileDictionary {
     this.cache.set(key, result)
   }
 
-  public async lookupByKanji(kanji: string): Promise<JMDictEntry | null> {
+  public async lookupByKanji(kanji: string): Promise<JMDictEntry[] | null> {
     return this.lookup(kanji)
   }
 
-  public async lookupByKana(kana: string): Promise<JMDictEntry | null> {
+  public async lookupByKana(kana: string): Promise<JMDictEntry[] | null> {
     return this.lookup(kana)
   }
 
@@ -281,14 +286,14 @@ export default FlatFileDictionary.getInstance()
 // Debug test function - call testDictionaryLookup('思う') in console
 declare global {
   interface Window {
-    testDictionaryLookup: (word: string) => Promise<JMDictEntry | null>
+    testDictionaryLookup: (word: string) => Promise<JMDictEntry[] | null>
   }
 }
 
 if (typeof window !== "undefined") {
   window.testDictionaryLookup = async (
     word: string
-  ): Promise<JMDictEntry | null> => {
+  ): Promise<JMDictEntry[] | null> => {
     const dict = FlatFileDictionary.getInstance()
     await dict.initialize()
     const result = await dict.lookup(word)

@@ -1,11 +1,10 @@
 // Unified Dictionary Service - integrates FlatFileDictionary with Deinflection
 // Provides simple lookup interface with automatic deinflection
 
+import { toHiragana } from "wanakana"
+
 import { deinflect } from "./deinflect"
-import flatFileDictionary, {
-  type JMDictEntry,
-  type LookupResult
-} from "./flat-file-dictionary"
+import flatFileDictionary, { type JMDictEntry } from "./flat-file-dictionary"
 
 export interface DictionaryEntry {
   word: string
@@ -18,10 +17,17 @@ export interface DictionaryEntry {
 }
 
 export interface DictionaryService {
-  lookup(word: string): Promise<DictionaryEntry | null>
-  lookupWithDeinflect(word: string): Promise<DictionaryEntry | null>
+  lookup(word: string, options?: LookupOptions): Promise<DictionaryEntry | null>
+  lookupWithDeinflect(
+    word: string,
+    options?: LookupOptions
+  ): Promise<DictionaryEntry | null>
   initialize(): Promise<void>
   isReady(): boolean
+}
+
+export interface LookupOptions {
+  reading?: string
 }
 
 class UnifiedDictionaryService implements DictionaryService {
@@ -54,31 +60,59 @@ class UnifiedDictionaryService implements DictionaryService {
     return this.ready
   }
 
-  async lookup(word: string): Promise<DictionaryEntry | null> {
+  async lookup(
+    word: string,
+    options?: LookupOptions
+  ): Promise<DictionaryEntry | null> {
     await this.initialize()
 
-    const entry = await this.flatFile.lookup(word)
-    if (!entry) {
+    const entries = await this.flatFile.lookup(word)
+    if (!entries || entries.length === 0) {
       return null
     }
 
-    return this.formatEntry(word, entry, true)
+    const bestEntry = this.selectBestEntry(entries, options)
+    return this.formatEntry(word, bestEntry, true)
   }
 
-  async lookupWithDeinflect(word: string): Promise<DictionaryEntry | null> {
+  async lookupWithDeinflect(
+    word: string,
+    options?: LookupOptions
+  ): Promise<DictionaryEntry | null> {
     await this.initialize()
 
     const result = await this.flatFile.lookupWithDeinflect(word, deinflect)
-    if (!result) {
+    if (!result || result.entries.length === 0) {
       return null
     }
 
+    const bestEntry = this.selectBestEntry(result.entries, options)
     return this.formatEntry(
       word,
-      result.entry,
+      bestEntry,
       result.isExact,
       result.deinflectReasons
     )
+  }
+
+  private selectBestEntry(
+    entries: JMDictEntry[],
+    options?: LookupOptions
+  ): JMDictEntry {
+    const reading = options?.reading
+      ? toHiragana(options.reading)
+      : undefined
+
+    if (reading) {
+      const match = entries.find((entry) =>
+        entry.kana?.some((kana) => kana === reading)
+      )
+      if (match) {
+        return match
+      }
+    }
+
+    return entries[0]
   }
 
   private formatEntry(
