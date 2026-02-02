@@ -31,6 +31,7 @@ interface WordCardProps {
   basicForm?: string
   reading?: string
   pos?: string
+  posDetail1?: string
   conjugatedForm?: string
 }
 
@@ -46,6 +47,7 @@ const WordCard: React.FC<WordCardProps> = ({
   basicForm,
   reading,
   pos,
+  posDetail1,
   conjugatedForm
 }) => {
   const [entry, setEntry] = useState<DictionaryEntry | null>(null)
@@ -153,7 +155,9 @@ const WordCard: React.FC<WordCardProps> = ({
       try {
         console.log("[WordCard] Looking up word:", word)
         const result = await dictionaryService.lookupWithDeinflect(word, {
-          reading
+          reading,
+          pos,
+          posDetail1
         })
 
         console.log("[WordCard] Lookup result:", {
@@ -211,7 +215,8 @@ const WordCard: React.FC<WordCardProps> = ({
 
   let romaji = ""
   try {
-    romaji = entry?.reading ? toRomaji(entry.reading) : toRomaji(word)
+    const romajiSource = entry?.reading || reading || word
+    romaji = toRomaji(romajiSource)
   } catch {
     romaji = ""
   }
@@ -282,6 +287,26 @@ const WordCard: React.FC<WordCardProps> = ({
           <div className="wordcard-loading">Loading...</div>
         ) : entry ? (
           <>
+            {(basicForm && basicForm !== word) || conjugatedForm ? (
+              <div className="wordcard-section">
+                <div className="wordcard-section-title">Form:</div>
+                <div className="wordcard-tags">
+                  {basicForm && basicForm !== word && (
+                    <span className="wordcard-kanji-tag">
+                      Base: {basicForm}
+                    </span>
+                  )}
+                  {conjugatedForm &&
+                    conjugatedForm !== "*" &&
+                    conjugatedForm !== "基本形" && (
+                      <span className="wordcard-kanji-tag">
+                        Conjugation: {conjugatedForm}
+                      </span>
+                    )}
+                </div>
+              </div>
+            ) : null}
+
             {/* Kanji */}
             {entry.entry.kanji?.length > 0 && (
               <div className="wordcard-section">
@@ -314,6 +339,27 @@ const WordCard: React.FC<WordCardProps> = ({
                         {gloss}
                       </span>
                     ))}
+                </div>
+              </div>
+            )}
+
+            {entry.alternates && entry.alternates.length > 0 && (
+              <div className="wordcard-section">
+                <div className="wordcard-section-title">Other meanings:</div>
+                <div className="wordcard-tags">
+                  {entry.alternates.slice(0, 2).map((alt, index) => {
+                    const altHead =
+                      alt.kanji?.[0] || alt.kana?.[0] || word
+                    const altGloss = alt.senses?.[0]?.gloss?.[0]
+                    const label = altGloss
+                      ? `${altHead}: ${altGloss}`
+                      : altHead
+                    return (
+                      <span key={index} className="wordcard-meaning-tag">
+                        {label}
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
             )}

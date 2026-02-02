@@ -70,6 +70,7 @@ interface Token {
   basic_form: string
   reading: string
   pos: string
+  pos_detail_1?: string
   conjugated_form: string
 }
 
@@ -166,6 +167,7 @@ class YouTubeSubtitleContainer {
     basicForm?: string
     reading?: string
     pos?: string
+    posDetail1?: string
     conjugatedForm?: string
   } = {
     word: "",
@@ -176,6 +178,7 @@ class YouTubeSubtitleContainer {
     basicForm: "",
     reading: "",
     pos: "",
+    posDetail1: "",
     conjugatedForm: ""
   }
 
@@ -804,7 +807,9 @@ class YouTubeSubtitleContainer {
                    data-token-word="${this.escapeHtml(token.surface_form)}" 
                    data-basic-form="${this.escapeHtml(token.basic_form)}" 
                    data-reading="${this.escapeHtml(token.reading)}" 
-                   data-pos="${this.escapeHtml(token.pos)}">${this.escapeHtml(char)}</span>`
+                   data-pos="${this.escapeHtml(token.pos)}"
+                   data-pos-detail-1="${this.escapeHtml(token.pos_detail_1 || "")}"
+                   data-conjugated-form="${this.escapeHtml(token.conjugated_form)}">${this.escapeHtml(char)}</span>`
             return span
           })
           .join("")
@@ -860,10 +865,14 @@ class YouTubeSubtitleContainer {
               rect.left + rect.width / 2,
               rect.top,
               {
-                basicForm: match.entry.basic_form || match.matchedText,
-                reading: match.entry.reading || "",
-                pos: match.entry.pos || "",
-                conjugatedForm: ""
+                basicForm:
+                  match.metadata?.basicForm ||
+                  match.entry.kanji?.[0] ||
+                  match.matchedText,
+                reading: match.metadata?.reading || "",
+                pos: match.metadata?.pos || "",
+                posDetail1: match.metadata?.posDetail1,
+                conjugatedForm: match.metadata?.conjugatedForm || ""
               }
             )
           }
@@ -927,6 +936,7 @@ class YouTubeSubtitleContainer {
         `[data-char-index="${bestMatch.startIndex}"]`
       ) as HTMLElement
       const rect = startChar.getBoundingClientRect()
+      const metadata = bestMatch.metadata
 
       this.wordCard = {
         word: bestMatch.matchedText,
@@ -934,10 +944,14 @@ class YouTubeSubtitleContainer {
         mouseY: rect.top,
         isVisible: true,
         isSticky: false,
-        basicForm: bestMatch.entry.kanji?.[0] || bestMatch.matchedText,
-        reading: bestMatch.entry.kana?.[0] || "",
-        pos: "",
-        conjugatedForm: ""
+        basicForm:
+          metadata?.basicForm ||
+          bestMatch.entry.kanji?.[0] ||
+          bestMatch.matchedText,
+        reading: metadata?.reading || bestMatch.entry.kana?.[0] || "",
+        pos: metadata?.pos || "",
+        posDetail1: metadata?.posDetail1,
+        conjugatedForm: metadata?.conjugatedForm || ""
       }
       console.log("[Hover] wordCard set, calling renderWordCard")
       this.renderWordCard()
@@ -959,6 +973,58 @@ class YouTubeSubtitleContainer {
     length: number
     matchedText: string
     entry: any
+    metadata?: {
+      basicForm?: string
+      reading?: string
+      pos?: string
+      posDetail1?: string
+      conjugatedForm?: string
+    }
+  } | null> {
+    const candidates = this.getCandidateStartIndexes(startIndex)
+    let bestMatch: {
+      startIndex: number
+      length: number
+      matchedText: string
+      entry: any
+      metadata?: {
+        basicForm?: string
+        reading?: string
+        pos?: string
+        posDetail1?: string
+        conjugatedForm?: string
+      }
+    } | null = null
+
+    for (const candidateStartIndex of candidates) {
+      const match = await this.findMatchFromStart(candidateStartIndex, maxLength)
+      if (!match) {
+        continue
+      }
+
+      if (!bestMatch || match.length > bestMatch.length) {
+        bestMatch = match
+      }
+    }
+
+    return bestMatch
+  }
+
+  private async findMatchFromStart(
+    startIndex: number,
+    maxLength: number
+  ): Promise<{
+    startIndex: number
+    length: number
+    matchedText: string
+    entry: any
+    metadata?: {
+      basicForm?: string
+      reading?: string
+      pos?: string
+      posDetail1?: string
+      conjugatedForm?: string
+    }
   } | null> {
     let chars = ""
     let matchedEntry: any = null
@@ -967,6 +1033,15 @@ class YouTubeSubtitleContainer {
       `[data-char-index="${startIndex}"]`
     ) as HTMLElement | null
     const tokenReading = startSpan?.getAttribute("data-reading") || undefined
+    const tokenPos = startSpan?.getAttribute("data-pos") || undefined
+    const tokenPosDetail1 =
+      startSpan?.getAttribute("data-pos-detail-1") || undefined
+    const tokenBasicForm =
+      startSpan?.getAttribute("data-basic-form") || undefined
+    const tokenConjugatedForm =
+      startSpan?.getAttribute("data-conjugated-form") || undefined
+    const startTokenId = startSpan?.getAttribute("data-token-id") || undefined
+    let spansMultipleTokens = false
 
     for (let i = 0; i < maxLength; i++) {
       const targetIndex = startIndex + i
@@ -979,12 +1054,24 @@ class YouTubeSubtitleContainer {
         break
       }
 
+      const tokenId = span.getAttribute("data-token-id") || undefined
+      if (startTokenId && tokenId && tokenId !== startTokenId) {
+        spansMultipleTokens = true
+      }
+
       chars += span.getAttribute("data-char") || ""
 
       try {
         console.log("[findBestMatch] Looking up:", chars)
+        const contextBefore = this.getContextBefore(startIndex)
+        const contextAfter = this.getContextAfter(startIndex + i + 1, 2)
         const entry = await dictionaryService.lookupWithDeinflect(chars, {
-          reading: tokenReading
+          reading: tokenReading,
+          pos: tokenPos,
+          posDetail1: tokenPosDetail1,
+          contextBefore,
+          contextAfter,
+          spansMultipleTokens
         })
         console.log(
           "[findBestMatch] Result for",
@@ -1012,11 +1099,135 @@ class YouTubeSubtitleContainer {
         startIndex,
         length: matchedLength,
         matchedText: chars.substring(0, matchedLength),
-        entry: matchedEntry
+        entry: matchedEntry,
+        metadata: {
+          basicForm: tokenBasicForm,
+          reading: tokenReading,
+          pos: tokenPos,
+          posDetail1: tokenPosDetail1,
+          conjugatedForm: tokenConjugatedForm
+        }
       }
     }
 
     return null
+  }
+
+  private getTokenStartIndex(charIndex: number): number {
+    const span = document.querySelector(
+      `[data-char-index="${charIndex}"]`
+    ) as HTMLElement | null
+    if (!span) {
+      return charIndex
+    }
+
+    const tokenId = span.getAttribute("data-token-id")
+    if (!tokenId) {
+      return charIndex
+    }
+
+    let startIndex = charIndex
+    while (startIndex > 0) {
+      const prev = document.querySelector(
+        `[data-char-index="${startIndex - 1}"]`
+      ) as HTMLElement | null
+      if (!prev || prev.getAttribute("data-token-id") !== tokenId) {
+        break
+      }
+      startIndex -= 1
+    }
+
+    return startIndex
+  }
+
+  private getCandidateStartIndexes(charIndex: number): number[] {
+    const startIndex = this.getTokenStartIndex(charIndex)
+    const candidates = [startIndex]
+    const span = document.querySelector(
+      `[data-char-index="${charIndex}"]`
+    ) as HTMLElement | null
+    const pos = span?.getAttribute("data-pos") || ""
+
+    if (this.shouldUsePreviousToken(pos)) {
+      const previousStartIndex = this.getPreviousTokenStartIndex(startIndex)
+      if (
+        previousStartIndex !== null &&
+        !candidates.includes(previousStartIndex)
+      ) {
+        candidates.push(previousStartIndex)
+      }
+    }
+
+    return candidates
+  }
+
+  private getPreviousTokenStartIndex(startIndex: number): number | null {
+    if (startIndex <= 0) {
+      return null
+    }
+
+    const prevSpan = document.querySelector(
+      `[data-char-index="${startIndex - 1}"]`
+    ) as HTMLElement | null
+    if (!prevSpan) {
+      return null
+    }
+
+    const prevTokenId = prevSpan.getAttribute("data-token-id")
+    if (!prevTokenId) {
+      return null
+    }
+
+    let prevStartIndex = startIndex - 1
+    while (prevStartIndex > 0) {
+      const span = document.querySelector(
+        `[data-char-index="${prevStartIndex - 1}"]`
+      ) as HTMLElement | null
+      if (!span || span.getAttribute("data-token-id") !== prevTokenId) {
+        break
+      }
+      prevStartIndex -= 1
+    }
+
+    return prevStartIndex
+  }
+
+  private shouldUsePreviousToken(pos: string): boolean {
+    if (!pos) {
+      return false
+    }
+
+    return (
+      pos.includes("助詞") ||
+      pos.includes("助動詞") ||
+      pos.includes("接尾") ||
+      pos.includes("記号")
+    )
+  }
+
+  private getContextBefore(startIndex: number): string {
+    if (startIndex <= 0) {
+      return ""
+    }
+
+    const span = document.querySelector(
+      `[data-char-index="${startIndex - 1}"]`
+    ) as HTMLElement | null
+    return span?.getAttribute("data-char") || ""
+  }
+
+  private getContextAfter(startIndex: number, count: number): string {
+    let result = ""
+    for (let i = 0; i < count; i++) {
+      const span = document.querySelector(
+        `[data-char-index="${startIndex + i}"]`
+      ) as HTMLElement | null
+      if (!span) {
+        break
+      }
+      result += span.getAttribute("data-char") || ""
+    }
+    return result
   }
 
   private highlightRegion(startIndex: number, length: number): void {
@@ -1064,6 +1275,7 @@ class YouTubeSubtitleContainer {
       basicForm: string
       reading: string
       pos: string
+      posDetail1?: string
       conjugatedForm: string
     }
   ): void {
@@ -1076,6 +1288,7 @@ class YouTubeSubtitleContainer {
       basicForm: metadata.basicForm,
       reading: metadata.reading,
       pos: metadata.pos,
+      posDetail1: metadata.posDetail1,
       conjugatedForm: metadata.conjugatedForm
     }
     this.renderWordCard()
@@ -1089,6 +1302,7 @@ class YouTubeSubtitleContainer {
       basicForm: string
       reading: string
       pos: string
+      posDetail1?: string
       conjugatedForm: string
     }
   ): void {
@@ -1101,6 +1315,7 @@ class YouTubeSubtitleContainer {
       basicForm: metadata.basicForm,
       reading: metadata.reading,
       pos: metadata.pos,
+      posDetail1: metadata.posDetail1,
       conjugatedForm: metadata.conjugatedForm
     }
     this.renderWordCard()
@@ -1658,6 +1873,7 @@ const WordCardManager: React.FC<{
     basicForm?: string
     reading?: string
     pos?: string
+    posDetail1?: string
     conjugatedForm?: string
   }
   containerRect: DOMRect | null
@@ -1677,6 +1893,7 @@ const WordCardManager: React.FC<{
       basicForm={wordCard.basicForm}
       reading={wordCard.reading}
       pos={wordCard.pos}
+      posDetail1={wordCard.posDetail1}
       conjugatedForm={wordCard.conjugatedForm}
     />
   )
