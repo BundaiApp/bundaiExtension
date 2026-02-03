@@ -52,3 +52,23 @@ Last updated: February 2, 2026
 ## Notes
 - The flat-file index must use the same ordering as the binary search comparator.
 - Token readings from kuromoji are katakana; convert to hiragana before matching.
+
+---
+
+## Phase 7: Phrase List (1k–5k) + Corpus-Driven Improvements
+- Build a compact phrase list from subtitle corpora (PMI / t-score / frequency).
+- Keep only phrases that appear across many shows (general Japanese).
+- Include base-form mapping + gloss for each phrase.
+- Use phrases only when they improve confidence (never block single-word matches).
+
+## Phase 8: Audio + Subtitle Alignment (optional but powerful)
+- Align subtitle lines to audio timestamps (forced alignment).
+- Use aligned clips to add “audio playback” for WordCard entries.
+- Use alignment to improve sense selection by context (spoken usage).
+
+## LLM-Assisted Offline Workflow (local models)
+- Use local LLMs to:
+  - Suggest phrase candidates and filter junk.
+  - Disambiguate homographs using surrounding text.
+  - Generate short definitions/usage notes (optional).
+- Training the extension itself is not needed; use LLMs to generate better lookup data.
