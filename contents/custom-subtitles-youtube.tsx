@@ -206,6 +206,9 @@ class YouTubeSubtitleContainer {
     document.addEventListener("webkitfullscreenchange", () => {
       this.reapplySubtitleStyles()
     })
+    window.addEventListener("resize", () => {
+      this.applySubtitleContainerPosition()
+    })
   }
 
   private reapplySubtitleStyles(): void {
@@ -230,14 +233,7 @@ class YouTubeSubtitleContainer {
       })
     }
 
-    if (this.subtitleContainer) {
-      const verticalPos =
-        this.subtitleContainerStyles.verticalPosition ?? this.settings.position
-      this.subtitleContainer.style.left = "50%"
-      this.subtitleContainer.style.transform = "translateX(-50%)"
-      this.subtitleContainer.style.bottom = `${verticalPos}%`
-      this.subtitleContainer.style.top = "auto"
-    }
+    this.applySubtitleContainerPosition()
   }
 
   private async loadWordCardStyles(): Promise<void> {
@@ -314,15 +310,7 @@ class YouTubeSubtitleContainer {
           })
         }
 
-        if (this.subtitleContainer) {
-          const verticalPos =
-            this.subtitleContainerStyles.verticalPosition ??
-            this.settings.position
-          this.subtitleContainer.style.left = "50%"
-          this.subtitleContainer.style.transform = "translateX(-50%)"
-          this.subtitleContainer.style.bottom = `${verticalPos}%`
-          this.subtitleContainer.style.top = "auto"
-        }
+        this.applySubtitleContainerPosition()
       }
     } catch (error) {
       console.error(
@@ -602,14 +590,32 @@ class YouTubeSubtitleContainer {
   }
 
   private loadSavedPosition(): void {
+    this.applySubtitleContainerPosition()
+  }
+
+  private applySubtitleContainerPosition(): void {
     if (!this.subtitleContainer) return
 
     const verticalPos =
       this.subtitleContainerStyles.verticalPosition ?? this.settings.position
+
     this.subtitleContainer.style.left = "50%"
     this.subtitleContainer.style.transform = "translateX(-50%)"
-    this.subtitleContainer.style.bottom = `${verticalPos}%`
     this.subtitleContainer.style.top = "auto"
+
+    if (this.videoElement) {
+      const rect = this.videoElement.getBoundingClientRect()
+      const videoHeight = rect.height || 0
+      const offsetFromViewportBottom = Math.max(
+        0,
+        window.innerHeight - rect.bottom
+      )
+      const bottomPx =
+        offsetFromViewportBottom + (videoHeight * verticalPos) / 100
+      this.subtitleContainer.style.bottom = `${bottomPx}px`
+    } else {
+      this.subtitleContainer.style.bottom = `${verticalPos}%`
+    }
   }
 
   public setEnabled(enabled: boolean): void {
@@ -1451,9 +1457,7 @@ class YouTubeSubtitleContainer {
     this.settings = { ...this.settings, ...newSettings }
 
     if (this.subtitleContainer && this.isEnabled) {
-      const verticalPos =
-        this.subtitleContainerStyles.verticalPosition ?? this.settings.position
-      this.subtitleContainer.style.bottom = `${verticalPos}%`
+      this.applySubtitleContainerPosition()
       this.subtitleContainer.style.gap = `${this.settings.gap}px`
     }
 
@@ -1714,15 +1718,7 @@ class YouTubeSubtitleContainer {
             })
           }
 
-          if (this.subtitleContainer) {
-            const verticalPos =
-              this.subtitleContainerStyles.verticalPosition ??
-              this.settings.position
-            this.subtitleContainer.style.left = "50%"
-            this.subtitleContainer.style.transform = "translateX(-50%)"
-            this.subtitleContainer.style.bottom = `${verticalPos}%`
-            this.subtitleContainer.style.top = "auto"
-          }
+          this.applySubtitleContainerPosition()
 
           sendResponse({ success: true })
           return true

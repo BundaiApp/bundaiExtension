@@ -49,10 +49,10 @@ const defaultWordCardStyles: WordCardStyles = {
 const defaultSubtitleContainerStyles: SubtitleContainerStyles = {
   backgroundColor: "#000000",
   textColor: "#ffffff",
-  fontSize: 50,
+  fontSize: 40,
   opacity: 0.9,
   borderRadius: 8,
-  verticalPosition: 10
+  verticalPosition: 25
 }
 
 let extensionState: ExtensionState = {
@@ -166,6 +166,49 @@ async function broadcastStateToAllTabs() {
   }
 }
 
+async function broadcastWordCardStyles() {
+  try {
+    const tabs = await chrome.tabs.query({})
+
+    for (const tab of tabs) {
+      if (!tab.id) continue
+      chrome.tabs
+        .sendMessage(tab.id, {
+          action: "setWordCardStyles",
+          styles: extensionState.wordCardStyles
+        })
+        .catch(() => {
+          // Content script might not be loaded yet, ignore
+        })
+    }
+  } catch (error) {
+    console.error("[Background] Failed to broadcast WordCard styles:", error)
+  }
+}
+
+async function broadcastSubtitleContainerStyles() {
+  try {
+    const tabs = await chrome.tabs.query({})
+
+    for (const tab of tabs) {
+      if (!tab.id) continue
+      chrome.tabs
+        .sendMessage(tab.id, {
+          action: "setSubtitleContainerStyles",
+          styles: extensionState.subtitleContainerStyles
+        })
+        .catch(() => {
+          // Content script might not be loaded yet, ignore
+        })
+    }
+  } catch (error) {
+    console.error(
+      "[Background] Failed to broadcast subtitle container styles:",
+      error
+    )
+  }
+}
+
 // Broadcast subtitle mode change to all tabs
 async function broadcastSubtitleModeToAllTabs(mode: "api" | "user") {
   try {
@@ -248,6 +291,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } else {
         sendResponse({ success: false, error: "Invalid mode" })
       }
+    })
+    return true
+  }
+
+  // WordCard styles
+  if (message.action === "getWordCardStyles") {
+    ensureStateInitialized().then(() => {
+      sendResponse({ styles: extensionState.wordCardStyles })
+    })
+    return true
+  }
+
+  if (message.action === "setWordCardStyles") {
+    ensureStateInitialized().then(() => {
+      extensionState.wordCardStyles = {
+        ...extensionState.wordCardStyles,
+        ...(message.styles || {})
+      }
+
+      storage
+        .set("wordCardStyles", extensionState.wordCardStyles)
+        .catch(console.error)
+
+      broadcastWordCardStyles()
+      sendResponse({ success: true })
+    })
+    return true
+  }
+
+  // Subtitle container styles
+  if (message.action === "getSubtitleContainerStyles") {
+    ensureStateInitialized().then(() => {
+      sendResponse({ styles: extensionState.subtitleContainerStyles })
+    })
+    return true
+  }
+
+  if (message.action === "setSubtitleContainerStyles") {
+    ensureStateInitialized().then(() => {
+      extensionState.subtitleContainerStyles = {
+        ...extensionState.subtitleContainerStyles,
+        ...(message.styles || {})
+      }
+
+      storage
+        .set(
+          "subtitleContainerStyles",
+          extensionState.subtitleContainerStyles
+        )
+        .catch(console.error)
+
+      broadcastSubtitleContainerStyles()
+      sendResponse({ success: true })
     })
     return true
   }
