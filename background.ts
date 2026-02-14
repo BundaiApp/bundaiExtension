@@ -28,6 +28,7 @@ interface SubtitleContainerStyles {
   opacity: number
   borderRadius: number
   verticalPosition: number
+  fullscreenVerticalPosition: number
 }
 
 interface ExtensionState {
@@ -52,7 +53,8 @@ const defaultSubtitleContainerStyles: SubtitleContainerStyles = {
   fontSize: 40,
   opacity: 0.9,
   borderRadius: 8,
-  verticalPosition: 25
+  verticalPosition: -20,
+  fullscreenVerticalPosition: 25
 }
 
 let extensionState: ExtensionState = {

@@ -63,6 +63,7 @@ interface SubtitleContainerStyles {
   opacity?: number
   borderRadius?: number
   verticalPosition?: number
+  fullscreenVerticalPosition?: number
 }
 
 interface Token {
@@ -144,7 +145,7 @@ class YouTubeSubtitleContainer {
       backgroundColor: "#000000",
       opacity: 0.8
     },
-    position: 25,
+    position: -20,
     gap: 10
   }
 
@@ -593,11 +594,32 @@ class YouTubeSubtitleContainer {
     this.applySubtitleContainerPosition()
   }
 
+  private isFullscreenActive(): boolean {
+    const doc = document as any
+    return !!(
+      document.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      document.body.classList.contains("ytp-fullscreen")
+    )
+  }
+
+  private getActiveVerticalPosition(): number {
+    const normal =
+      typeof this.subtitleContainerStyles.verticalPosition === "number"
+        ? this.subtitleContainerStyles.verticalPosition
+        : this.settings.position
+    const fullscreen =
+      typeof this.subtitleContainerStyles.fullscreenVerticalPosition ===
+      "number"
+        ? this.subtitleContainerStyles.fullscreenVerticalPosition
+        : normal
+    return this.isFullscreenActive() ? fullscreen : normal
+  }
+
   private applySubtitleContainerPosition(): void {
     if (!this.subtitleContainer) return
 
-    const verticalPos =
-      this.subtitleContainerStyles.verticalPosition ?? this.settings.position
+    const verticalPos = this.getActiveVerticalPosition()
 
     this.subtitleContainer.style.left = "50%"
     this.subtitleContainer.style.transform = "translateX(-50%)"
@@ -697,15 +719,18 @@ class YouTubeSubtitleContainer {
     const opacity = subtitleSettings.opacity ?? 0.9
 
     element.style.cssText = `
-      background: ${this.hexToRgba(subtitleSettings.backgroundColor, opacity)};
-      color: ${subtitleSettings.color};
-      font-size: ${subtitleSettings.fontSize}px;
-      font-family: Arial, sans-serif;
-      font-weight: bold;
+      background: ${this.hexToRgba(
+        subtitleSettings.backgroundColor,
+        opacity
+      )} !important;
+      color: ${subtitleSettings.color} !important;
+      font-size: ${subtitleSettings.fontSize}px !important;
+      font-family: Arial, sans-serif !important;
+      font-weight: bold !important;
       padding: 8px 16px;
-      border-radius: ${borderRadius}px;
+      border-radius: ${borderRadius}px !important;
       text-align: center;
-      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8) !important;
       line-height: 1.4;
       min-height: 20px;
       display: none;

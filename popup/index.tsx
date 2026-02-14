@@ -69,7 +69,8 @@ function MainPage({ onOpenTabs }) {
     fontSize: 40,
     opacity: 0.9,
     borderRadius: 8,
-    verticalPosition: 25
+    verticalPosition: -20,
+    fullscreenVerticalPosition: 25
   })
   const [showSubtitleStyleEditor, setShowSubtitleStyleEditor] = useState(false)
 
@@ -490,7 +491,8 @@ function MainPage({ onOpenTabs }) {
       fontSize: 40,
       opacity: 0.9,
       borderRadius: 8,
-      verticalPosition: 25
+      verticalPosition: -20,
+      fullscreenVerticalPosition: 25
     }
     setSubtitleContainerStyles(defaultStyles)
     await secureStorage.set("subtitleContainerStyles", defaultStyles)
@@ -881,18 +883,41 @@ function MainPage({ onOpenTabs }) {
               {/* Vertical Position */}
               <div>
                 <label className="text-xs font-semibold block mb-1">
-                  Vertical Position: {subtitleContainerStyles.verticalPosition}%
-                  from bottom
+                  Vertical Position (Windowed):{" "}
+                  {subtitleContainerStyles.verticalPosition}% from video bottom
                 </label>
                 <input
                   type="range"
-                  min="0"
+                  min="-30"
                   max="50"
                   step="1"
                   value={subtitleContainerStyles.verticalPosition}
                   onChange={(e) =>
                     handleSubtitleStyleChange(
                       "verticalPosition",
+                      parseInt(e.target.value)
+                    )
+                  }
+                  className="w-full"
+                />
+              </div>
+
+              {/* Fullscreen Vertical Position */}
+              <div>
+                <label className="text-xs font-semibold block mb-1">
+                  Fullscreen Vertical:{" "}
+                  {subtitleContainerStyles.fullscreenVerticalPosition}% from
+                  video bottom
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="50"
+                  step="1"
+                  value={subtitleContainerStyles.fullscreenVerticalPosition}
+                  onChange={(e) =>
+                    handleSubtitleStyleChange(
+                      "fullscreenVerticalPosition",
                       parseInt(e.target.value)
                     )
                   }
