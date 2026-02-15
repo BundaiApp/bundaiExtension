@@ -62,9 +62,12 @@ function ForgotPassword({ onBack, onSuccess }: { onBack?: () => void, onSuccess?
   }
 
   return (
-    <form onSubmit={handleSubmit} className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
+    <form
+      onSubmit={handleSubmit}
+      className="w-full p-6 bg-yellow-400 text-black flex flex-col gap-4"
+      style={{ maxWidth: "32rem" }}>
       <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
-        <h1 className="text-xl font-extrabold text-black">Forgot Password?</h1>
+        <h1 className="text-3xl font-extrabold text-black">Forgot Password?</h1>
       </div>
 
       {success ? (
@@ -76,7 +79,7 @@ function ForgotPassword({ onBack, onSuccess }: { onBack?: () => void, onSuccess?
         </div>
       ) : (
         <>
-          <p className="text-sm text-black opacity-80">
+          <p className="text-lg text-black opacity-80">
             Enter the email you used to sign up and we will send you reset instructions.
           </p>
 
@@ -86,16 +89,18 @@ function ForgotPassword({ onBack, onSuccess }: { onBack?: () => void, onSuccess?
             placeholder="you@example.com"
             value={email}
             onChange={e => setEmail(e.target.value)}
-            className="p-2 rounded border border-black"
+            className="p-3 text-lg rounded-md border-2 border-black w-full"
+            style={{ width: "100%", boxSizing: "border-box" }}
             required
             disabled={!secureReady || loading}
           />
 
-          {error && <div className="text-red-700 text-xs">{error}</div>}
+          {error && <div className="text-red-700 text-sm font-semibold">{error}</div>}
 
           <button 
             type="submit" 
-            className="bg-black text-yellow-400 p-2 rounded font-bold disabled:opacity-50" 
+            className="bg-black text-white p-3 rounded-md font-bold text-lg disabled:opacity-50"
+            style={{ color: "#fef08a", width: "100%", boxSizing: "border-box" }}
             disabled={loading || !secureReady}
           >
             {loading ? "Sending..." : !secureReady ? "Secure storage..." : "Send reset link"}
@@ -103,10 +108,10 @@ function ForgotPassword({ onBack, onSuccess }: { onBack?: () => void, onSuccess?
         </>
       )}
 
-      <div className="text-xs text-center mt-2">
+      <div className="text-lg text-center mt-2">
         <button 
           type="button" 
-          className="underline text-black hover:text-yellow-700" 
+          className="auth-link-btn" 
           onClick={onBack}
         >
           Back to login

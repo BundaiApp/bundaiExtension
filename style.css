@@ -812,6 +812,29 @@ button.text-black:hover {
   color: #374151;
 }
 
+/* Auth text buttons (avoid default browser button chrome) */
+.auth-link-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  line-height: inherit;
+  color: #000;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.auth-link-btn:hover {
+  color: #92400e;
+}
+.auth-link-btn:focus-visible {
+  outline: 2px solid #000;
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+
 /* Disabled helpers */
 button:disabled.bg-gray-400 {
   background-color: #9ca3af;

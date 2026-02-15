@@ -1261,6 +1261,7 @@ function MainPage({ onOpenTabs }) {
                   Fetch from Bundai API
                 </p>
 
+                {/*
                 <label className="flex items-center gap-2 cursor-pointer mt-1">
                   <input
                     type="radio"
@@ -1274,6 +1275,7 @@ function MainPage({ onOpenTabs }) {
                 <p className="text-xs text-gray-600 ml-6">
                   Generate subtitles on your Mac (localhost)
                 </p>
+                */}
               </>
             )}
 
@@ -1507,7 +1509,8 @@ function MainPage({ onOpenTabs }) {
             </div>
           )}
         </div>
-      ) : enabled &&
+      ) : /* Local ASR panel temporarily disabled */ false &&
+        enabled &&
         isYouTubePage &&
         currentVideoId &&
         subtitleMode === "asr" ? (

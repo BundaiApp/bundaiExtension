@@ -73,9 +73,10 @@ function Login({
   return (
     <form
       onSubmit={handleSubmit}
-      className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
+      className="w-full p-6 bg-yellow-400 text-black flex flex-col gap-4"
+      style={{ maxWidth: "32rem" }}>
       <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
-        <h1 className="text-xl font-extrabold text-black">Bundai Login</h1>
+        <h1 className="text-3xl font-extrabold text-black">Bundai Login</h1>
       </div>
       <input
         id="email"
@@ -83,7 +84,8 @@ function Login({
         placeholder="Email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="p-2 rounded border border-black"
+        className="p-3 text-lg rounded-md border-2 border-black w-full"
+        style={{ width: "100%", boxSizing: "border-box" }}
         required
         disabled={!secureReady}
       />
@@ -94,15 +96,17 @@ function Login({
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="p-2 rounded border border-black w-full"
+          className="p-3 text-lg rounded-md border-2 border-black w-full"
+          style={{ width: "100%", boxSizing: "border-box" }}
           required
           disabled={!secureReady}
         />
       </div>
-      {error && <div className="text-red-700 text-xs">{error}</div>}
+      {error && <div className="text-red-700 text-sm font-semibold">{error}</div>}
       <button
         type="submit"
-        className="bg-black text-white p-2 rounded font-bold"
+        className="bg-black text-white p-3 rounded-md font-bold text-lg"
+        style={{ width: "100%", boxSizing: "border-box", color: "#fef08a" }}
         disabled={loading || !secureReady}>
         {loading
           ? "Logging in..."
@@ -110,19 +114,19 @@ function Login({
             ? "Secure storage..."
             : "Login"}
       </button>
-      <div className="text-xs text-center mt-2">
+      <div className="text-lg text-center mt-2">
         <button
           type="button"
-          className="underline text-black hover:text-yellow-700"
+          className="auth-link-btn"
           onClick={onShowForgotPassword}>
           Forgot password?
         </button>
       </div>
-      <div className="text-xs text-center mt-2">
+      <div className="text-lg text-center mt-2">
         Don't have an account?{" "}
         <button
           type="button"
-          className="underline text-black hover:text-yellow-700"
+          className="auth-link-btn"
           onClick={onShowRegister}>
           Register
         </button>

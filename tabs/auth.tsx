@@ -6,7 +6,6 @@ import client from "~graphql"
 import PageLayout from '~components/PageLayout'
 import Login from '../popup/login'
 import Register from '../popup/register'
-import Verification from '../popup/verification'
 import ForgotPassword from '../popup/forgotPassword'
 
 function AuthPage() {
@@ -14,9 +13,7 @@ function AuthPage() {
   const [secureReady, setSecureReady] = useState(false)
   const [secureStorage] = useState(() => new SecureStorage())
   const [showRegister, setShowRegister] = useState(false)
-  const [showVerification, setShowVerification] = useState(false)
   const [showForgotPassword, setShowForgotPassword] = useState(false)
-  const [verificationData, setVerificationData] = useState({ userId: '', email: '' })
   const [userInfo, setUserInfo] = useState({ username: '', email: '' })
 
   useEffect(() => {
@@ -80,27 +77,8 @@ function AuthPage() {
     setShowForgotPassword(false)
   }
 
-  const handleRegisterSuccess = (data) => {
-    setVerificationData({
-      userId: data.user._id,
-      email: data.user.email
-    })
-    setShowVerification(true)
-  }
-
-  const handleVerificationSuccess = async () => {
-    // Reload user info after verification
-    const username = await secureStorage.get("username") || ''
-    const email = await secureStorage.get("email") || ''
-    setUserInfo({ username, email })
-    setLoggedIn(true)
-    setShowVerification(false)
-    setShowRegister(false)
-  }
-
-  const handleBackFromVerification = () => {
-    setShowVerification(false)
-    setShowRegister(true)
+  const handleRegisterSuccess = async () => {
+    await handleLogin()
   }
 
   if (!secureReady || loggedIn === null) {
@@ -211,21 +189,6 @@ function AuthPage() {
               </div>
             </div>
           </div>
-        </div>
-      </PageLayout>
-    )
-  }
-
-  if (showVerification) {
-    return (
-      <PageLayout>
-        <div className="min-h-screen bg-yellow-400 flex items-center justify-center p-8">
-          <Verification
-            onVerified={handleVerificationSuccess}
-            onBack={handleBackFromVerification}
-            userEmail={verificationData.email}
-            userId={verificationData.userId}
-          />
         </div>
       </PageLayout>
     )
