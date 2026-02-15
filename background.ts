@@ -33,7 +33,7 @@ interface SubtitleContainerStyles {
 
 interface ExtensionState {
   extensionEnabled: boolean
-  subtitleMode: "api" | "user"
+  subtitleMode: "api" | "user" | "asr"
   wordCardStyles: WordCardStyles
   subtitleContainerStyles: SubtitleContainerStyles
 }
@@ -83,8 +83,8 @@ async function initializeState() {
     // Load subtitleMode
     const modeValue = await storage.get("subtitleMode")
     extensionState.subtitleMode =
-      modeValue && ["api", "user"].includes(modeValue as string)
-        ? (modeValue as "api" | "user")
+      modeValue && ["api", "user", "asr"].includes(modeValue as string)
+        ? (modeValue as "api" | "user" | "asr")
         : "user"
 
     // Load wordCardStyles
@@ -212,7 +212,7 @@ async function broadcastSubtitleContainerStyles() {
 }
 
 // Broadcast subtitle mode change to all tabs
-async function broadcastSubtitleModeToAllTabs(mode: "api" | "user") {
+async function broadcastSubtitleModeToAllTabs(mode: "api" | "user" | "asr") {
   try {
     const tabs = await chrome.tabs.query({})
 
@@ -269,7 +269,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
-  // Subtitle mode (api | user)
+  // Subtitle mode (api | user | asr)
   if (message.action === "getSubtitleMode") {
     ensureStateInitialized().then(() => {
       sendResponse({ mode: extensionState.subtitleMode })
@@ -279,8 +279,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === "setSubtitleMode") {
     ensureStateInitialized().then(() => {
-      const mode = message.subtitleMode as "api" | "user"
-      if (["api", "user"].includes(mode)) {
+      const mode = message.subtitleMode as "api" | "user" | "asr"
+      if (["api", "user", "asr"].includes(mode)) {
         extensionState.subtitleMode = mode
 
         // Persist to storage

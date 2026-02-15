@@ -124,6 +124,7 @@ class YouTubeSubtitleContainer {
   private subtitleContainer: HTMLDivElement | null = null
   private subtitle1Element: HTMLDivElement | null = null
   private subtitle2Element: HTMLDivElement | null = null
+  private repeatButtonElement: HTMLButtonElement | null = null
   private wordCardContainer: HTMLDivElement | null = null
   private wordCardRoot: any = null
   private updateInterval: NodeJS.Timeout | null = null
@@ -191,6 +192,10 @@ class YouTubeSubtitleContainer {
   private isInitialized: boolean = false
   private wordCardStyles: WordCardStyles = {}
   private subtitleContainerStyles: SubtitleContainerStyles = {}
+  private isAsrRomajiTrackActive: boolean = false
+  private isSentenceRepeatEnabled: boolean = false
+  private repeatCue: SubtitleCue | null = null
+  private lastRepeatSeekAtMs: number = 0
 
   constructor() {
     this.setupMessageListener()
@@ -212,28 +217,46 @@ class YouTubeSubtitleContainer {
     })
   }
 
-  private reapplySubtitleStyles(): void {
-    if (this.subtitle1Element) {
-      this.applySubtitleStyles(this.subtitle1Element, {
-        backgroundColor:
-          this.subtitleContainerStyles.backgroundColor || "#000000",
-        color: this.subtitleContainerStyles.textColor || "#ffffff",
-        fontSize: this.subtitleContainerStyles.fontSize || 40,
-        opacity: this.subtitleContainerStyles.opacity || 0.9,
-        borderRadius: this.subtitleContainerStyles.borderRadius || 8
-      })
+  private getBaseSubtitleTextStyles() {
+    return {
+      backgroundColor: this.subtitleContainerStyles.backgroundColor || "#000000",
+      color: this.subtitleContainerStyles.textColor || "#ffffff",
+      fontSize: this.subtitleContainerStyles.fontSize || 40,
+      opacity: this.subtitleContainerStyles.opacity || 0.9,
+      borderRadius: this.subtitleContainerStyles.borderRadius || 8
     }
-    if (this.subtitle2Element) {
-      this.applySubtitleStyles(this.subtitle2Element, {
-        backgroundColor:
-          this.subtitleContainerStyles.backgroundColor || "#000000",
-        color: this.subtitleContainerStyles.textColor || "#ffffff",
-        fontSize: this.subtitleContainerStyles.fontSize || 40,
-        opacity: this.subtitleContainerStyles.opacity || 0.9,
-        borderRadius: this.subtitleContainerStyles.borderRadius || 8
-      })
+  }
+
+  private getSecondarySubtitleTextStyles() {
+    const base = this.getBaseSubtitleTextStyles()
+    if (!this.isAsrRomajiTrackActive) {
+      return base
     }
 
+    const smallFontSize = Math.max(18, Math.round((base.fontSize || 40) * 0.62))
+    return {
+      ...base,
+      backgroundColor: "#111827",
+      color: "#93c5fd",
+      fontSize: smallFontSize,
+      opacity: 0.9
+    }
+  }
+
+  private refreshSubtitleTextStyles(): void {
+    if (this.subtitle1Element) {
+      this.applySubtitleStyles(this.subtitle1Element, this.getBaseSubtitleTextStyles())
+    }
+    if (this.subtitle2Element) {
+      this.applySubtitleStyles(
+        this.subtitle2Element,
+        this.getSecondarySubtitleTextStyles()
+      )
+    }
+  }
+
+  private reapplySubtitleStyles(): void {
+    this.refreshSubtitleTextStyles()
     this.applySubtitleContainerPosition()
   }
 
@@ -289,28 +312,7 @@ class YouTubeSubtitleContainer {
           "[YouTube Subtitles] Loaded subtitle container styles:",
           this.subtitleContainerStyles
         )
-
-        if (this.subtitle1Element) {
-          this.applySubtitleStyles(this.subtitle1Element, {
-            backgroundColor:
-              this.subtitleContainerStyles.backgroundColor || "#000000",
-            color: this.subtitleContainerStyles.textColor || "#ffffff",
-            fontSize: this.subtitleContainerStyles.fontSize || 40,
-            opacity: this.subtitleContainerStyles.opacity || 0.9,
-            borderRadius: this.subtitleContainerStyles.borderRadius || 8
-          })
-        }
-        if (this.subtitle2Element) {
-          this.applySubtitleStyles(this.subtitle2Element, {
-            backgroundColor:
-              this.subtitleContainerStyles.backgroundColor || "#000000",
-            color: this.subtitleContainerStyles.textColor || "#ffffff",
-            fontSize: this.subtitleContainerStyles.fontSize || 40,
-            opacity: this.subtitleContainerStyles.opacity || 0.9,
-            borderRadius: this.subtitleContainerStyles.borderRadius || 8
-          })
-        }
-
+        this.refreshSubtitleTextStyles()
         this.applySubtitleContainerPosition()
       }
     } catch (error) {
@@ -565,17 +567,21 @@ class YouTubeSubtitleContainer {
       max-width: 80%;
       min-width: 300px;
     `
+    this.ensureRepeatButton()
 
     this.subtitle1Element = document.createElement("div")
     this.subtitle1Element.className = "custom-subtitle subtitle-1"
     this.subtitle1Element.style.cursor = "default"
-    this.applySubtitleStyles(this.subtitle1Element, this.settings.subtitle1)
+    this.applySubtitleStyles(this.subtitle1Element, this.getBaseSubtitleTextStyles())
     this.subtitleContainer.appendChild(this.subtitle1Element)
 
     this.subtitle2Element = document.createElement("div")
     this.subtitle2Element.className = "custom-subtitle subtitle-2"
     this.subtitle2Element.style.cursor = "default"
-    this.applySubtitleStyles(this.subtitle2Element, this.settings.subtitle2)
+    this.applySubtitleStyles(
+      this.subtitle2Element,
+      this.getSecondarySubtitleTextStyles()
+    )
     this.subtitleContainer.appendChild(this.subtitle2Element)
 
     this.createReactWordCard()
@@ -761,6 +767,147 @@ class YouTubeSubtitleContainer {
     }, 100)
   }
 
+  private ensureRepeatButton(): void {
+    if (!this.subtitleContainer || this.repeatButtonElement) return
+
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "bundai-repeat-btn"
+    button.style.cssText = `
+      align-self: center;
+      margin-bottom: 6px;
+      padding: 4px 10px;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 9999px;
+      background: rgba(17,24,39,0.92);
+      color: #e5e7eb;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      user-select: none;
+    `
+    button.addEventListener("click", (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      this.toggleSentenceRepeat()
+    })
+
+    this.subtitleContainer.appendChild(button)
+    this.repeatButtonElement = button
+    this.updateRepeatButtonState()
+  }
+
+  private updateRepeatButtonState(): void {
+    if (!this.repeatButtonElement) return
+
+    if (this.isSentenceRepeatEnabled) {
+      this.repeatButtonElement.textContent = "Repeat: On"
+      this.repeatButtonElement.style.background = "rgba(5,150,105,0.92)"
+      this.repeatButtonElement.style.color = "#ecfdf5"
+      this.repeatButtonElement.style.borderColor = "rgba(16,185,129,0.8)"
+    } else {
+      this.repeatButtonElement.textContent = "Repeat: Off"
+      this.repeatButtonElement.style.background = "rgba(17,24,39,0.92)"
+      this.repeatButtonElement.style.color = "#e5e7eb"
+      this.repeatButtonElement.style.borderColor = "rgba(255,255,255,0.25)"
+    }
+  }
+
+  private findCueForRepeat(currentTime: number): SubtitleCue | null {
+    if (!this.subtitle1Data.length) {
+      return null
+    }
+
+    const active = this.subtitle1Data.find(
+      (cue) => currentTime >= cue.start && currentTime <= cue.end
+    )
+    if (active) {
+      return active
+    }
+
+    let nearest: SubtitleCue | null = null
+    let minDistance = Number.POSITIVE_INFINITY
+    for (const cue of this.subtitle1Data) {
+      const distance =
+        currentTime < cue.start
+          ? cue.start - currentTime
+          : currentTime > cue.end
+            ? currentTime - cue.end
+            : 0
+      if (distance < minDistance) {
+        minDistance = distance
+        nearest = cue
+      }
+    }
+
+    if (minDistance > 12) {
+      return null
+    }
+    return nearest
+  }
+
+  private stopSentenceRepeat(): void {
+    this.isSentenceRepeatEnabled = false
+    this.repeatCue = null
+    this.updateRepeatButtonState()
+  }
+
+  private toggleSentenceRepeat(): void {
+    if (!this.videoElement) return
+
+    if (this.isSentenceRepeatEnabled) {
+      this.stopSentenceRepeat()
+      return
+    }
+
+    const cue = this.findCueForRepeat(this.videoElement.currentTime)
+    if (!cue || cue.end <= cue.start) {
+      console.log("[YouTube Subtitles] Repeat requested but no cue found")
+      this.stopSentenceRepeat()
+      return
+    }
+
+    this.repeatCue = cue
+    this.isSentenceRepeatEnabled = true
+    this.lastRepeatSeekAtMs = 0
+    this.updateRepeatButtonState()
+
+    const targetTime = Math.max(0, cue.start + 0.01)
+    this.videoElement.currentTime = targetTime
+    if (this.videoElement.paused) {
+      this.videoElement.play().catch(() => {
+        // Ignore autoplay-related rejections.
+      })
+    }
+  }
+
+  private handleSentenceRepeatLoop(currentTime: number): void {
+    if (!this.isSentenceRepeatEnabled || !this.videoElement || !this.repeatCue) {
+      return
+    }
+
+    if (this.repeatCue.end <= this.repeatCue.start) {
+      this.stopSentenceRepeat()
+      return
+    }
+
+    if (currentTime >= this.repeatCue.end - 0.03) {
+      const now = Date.now()
+      if (now - this.lastRepeatSeekAtMs < 120) return
+
+      this.lastRepeatSeekAtMs = now
+      const targetTime = Math.max(0, this.repeatCue.start + 0.01)
+      this.videoElement.currentTime = targetTime
+
+      if (this.videoElement.paused) {
+        this.videoElement.play().catch(() => {
+          // Ignore autoplay-related rejections.
+        })
+      }
+    }
+  }
+
   private updateSubtitles(): void {
     if (!this.subtitle1Element || !this.subtitle2Element || !this.isEnabled)
       return
@@ -768,6 +915,7 @@ class YouTubeSubtitleContainer {
     if (!this.videoElement) return
 
     const currentTime = this.videoElement.currentTime
+    this.handleSentenceRepeatLoop(currentTime)
 
     const subtitle1Cue = this.subtitle1Data.find(
       (cue) => currentTime >= cue.start && currentTime <= cue.end
@@ -1443,6 +1591,63 @@ class YouTubeSubtitleContainer {
     return window.kuromojiTokenizer.tokenize(text)
   }
 
+  private normalizeSubtitleLine(text: string): string {
+    return String(text || "").replace(/\r?\n+/g, " ").replace(/\s+/g, " ").trim()
+  }
+
+  private toRomajiSubtitleLine(text: string): string {
+    const normalized = this.normalizeSubtitleLine(text)
+    if (!normalized) return ""
+
+    try {
+      if (window.kuromojiTokenizer) {
+        const tokens = this.tokenizeJapanese(normalized)
+        if (tokens.length > 0) {
+          const romaji = tokens
+            .map((token) => {
+              const tokenReading =
+                token.reading && token.reading !== "*"
+                  ? token.reading
+                  : token.surface_form || ""
+              return toRomaji(tokenReading || token.surface_form || "")
+            })
+            .join(" ")
+            .replace(/\s+([.,!?;:])/g, "$1")
+            .replace(/\s+([。、！？])/g, "$1")
+            .replace(/。/g, ".")
+            .replace(/、/g, ",")
+            .replace(/\s+/g, " ")
+            .trim()
+
+          if (romaji) {
+            return romaji.charAt(0).toUpperCase() + romaji.slice(1)
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("[YouTube Subtitles] Failed kuromoji romaji conversion:", error)
+    }
+
+    const fallback = toRomaji(normalized)
+      .replace(/\s+([.,!?;:])/g, "$1")
+      .replace(/\s+([。、！？])/g, "$1")
+      .replace(/。/g, ".")
+      .replace(/、/g, ",")
+      .replace(/\s+/g, " ")
+      .trim()
+    if (!fallback) {
+      return normalized
+    }
+    return fallback.charAt(0).toUpperCase() + fallback.slice(1)
+  }
+
+  private buildRomajiCuesFromJapanese(cues: SubtitleCue[]): SubtitleCue[] {
+    return cues.map((cue) => ({
+      ...cue,
+      text: this.toRomajiSubtitleLine(cue.text || "")
+    }))
+  }
+
   private removeSubtitleContainer(): void {
     if (this.updateInterval) {
       clearInterval(this.updateInterval)
@@ -1454,6 +1659,7 @@ class YouTubeSubtitleContainer {
       this.subtitleContainer = null
       this.subtitle1Element = null
       this.subtitle2Element = null
+      this.repeatButtonElement = null
     }
 
     if (this.wordCardRoot) {
@@ -1468,6 +1674,7 @@ class YouTubeSubtitleContainer {
 
     this.lastProcessedSubtitle1Text = ""
     this.lastProcessedSubtitle2Text = ""
+    this.stopSentenceRepeat()
 
     this.wordCard = {
       word: "",
@@ -1487,11 +1694,14 @@ class YouTubeSubtitleContainer {
     }
 
     if (this.subtitle1Element && this.isEnabled) {
-      this.applySubtitleStyles(this.subtitle1Element, this.settings.subtitle1)
+      this.applySubtitleStyles(this.subtitle1Element, this.getBaseSubtitleTextStyles())
     }
 
     if (this.subtitle2Element && this.isEnabled) {
-      this.applySubtitleStyles(this.subtitle2Element, this.settings.subtitle2)
+      this.applySubtitleStyles(
+        this.subtitle2Element,
+        this.getSecondarySubtitleTextStyles()
+      )
     }
   }
 
@@ -1721,27 +1931,7 @@ class YouTubeSubtitleContainer {
 
         if (message.action === "setSubtitleContainerStyles") {
           this.subtitleContainerStyles = message.styles || {}
-
-          if (this.subtitle1Element) {
-            this.applySubtitleStyles(this.subtitle1Element, {
-              backgroundColor:
-                this.subtitleContainerStyles.backgroundColor || "#000000",
-              color: this.subtitleContainerStyles.textColor || "#ffffff",
-              fontSize: this.subtitleContainerStyles.fontSize || 40,
-              opacity: this.subtitleContainerStyles.opacity || 0.9,
-              borderRadius: this.subtitleContainerStyles.borderRadius || 8
-            })
-          }
-          if (this.subtitle2Element) {
-            this.applySubtitleStyles(this.subtitle2Element, {
-              backgroundColor:
-                this.subtitleContainerStyles.backgroundColor || "#000000",
-              color: this.subtitleContainerStyles.textColor || "#ffffff",
-              fontSize: this.subtitleContainerStyles.fontSize || 40,
-              opacity: this.subtitleContainerStyles.opacity || 0.9,
-              borderRadius: this.subtitleContainerStyles.borderRadius || 8
-            })
-          }
+          this.refreshSubtitleTextStyles()
 
           this.applySubtitleContainerPosition()
 
@@ -1750,7 +1940,7 @@ class YouTubeSubtitleContainer {
         }
 
         if (message.action === "setSubtitleMode") {
-          const mode = message.subtitleMode as "api" | "user"
+          const mode = message.subtitleMode as "api" | "user" | "asr"
           console.log("[YouTube Subtitles] setSubtitleMode:", mode)
 
           if (!this.isEnabled) {
@@ -1761,7 +1951,12 @@ class YouTubeSubtitleContainer {
           }
 
           this.subtitle1Data = []
+          this.subtitle2Data = []
           this.lastProcessedSubtitle1Text = ""
+          this.lastProcessedSubtitle2Text = ""
+          this.stopSentenceRepeat()
+          this.isAsrRomajiTrackActive = false
+          this.refreshSubtitleTextStyles()
 
           if (mode === "api") {
             this.loadSavedSubtitles()
@@ -1770,6 +1965,12 @@ class YouTubeSubtitleContainer {
             if (videoId) {
               this.loadSavedUserSubtitles(videoId)
             }
+          } else if (mode === "asr") {
+            // ASR is now explicit load-only from popup action.
+            // Do not auto-load cached ASR subtitles on mode switch.
+            console.log(
+              "[YouTube Subtitles] ASR mode enabled. Waiting for explicit load action."
+            )
           }
 
           sendResponse({ success: true })
@@ -1790,12 +1991,62 @@ class YouTubeSubtitleContainer {
           if (trackNumber === 1) {
             this.subtitle1Data = cues
             this.lastProcessedSubtitle1Text = ""
+            this.stopSentenceRepeat()
+            this.isAsrRomajiTrackActive = false
+            this.refreshSubtitleTextStyles()
           } else {
             this.subtitle2Data = cues
             this.lastProcessedSubtitle2Text = ""
+            this.isAsrRomajiTrackActive = false
+            this.refreshSubtitleTextStyles()
           }
 
           sendResponse({ success: true })
+          return true
+        }
+
+        if (message.action === "loadAsrSubtitle") {
+          console.log("[YouTube Subtitles] loadAsrSubtitle received")
+          const includeRomaji = message.includeRomaji !== false
+          const cues = (Array.isArray(message.cues) ? message.cues : [])
+            .filter(
+              (cue) =>
+                cue &&
+                typeof cue.start === "number" &&
+                typeof cue.end === "number"
+            )
+            .map((cue) => ({
+              start: cue.start,
+              end: cue.end,
+              text: this.normalizeSubtitleLine(String(cue.text || ""))
+            }))
+
+          if (!this.isEnabled) {
+            this.setEnabled(true)
+          }
+          if (!this.subtitleContainer) {
+            this.setupSubtitleContainer()
+          }
+
+          this.subtitle1Data = cues
+          this.lastProcessedSubtitle1Text = ""
+          this.stopSentenceRepeat()
+          this.isAsrRomajiTrackActive = includeRomaji
+          this.refreshSubtitleTextStyles()
+
+          if (includeRomaji) {
+            this.subtitle2Data = this.buildRomajiCuesFromJapanese(cues)
+            this.lastProcessedSubtitle2Text = ""
+          } else {
+            this.subtitle2Data = []
+            this.lastProcessedSubtitle2Text = ""
+          }
+
+          sendResponse({
+            success: true,
+            subtitle1Count: this.subtitle1Data.length,
+            subtitle2Count: this.subtitle2Data.length
+          })
           return true
         }
 
@@ -1804,9 +2055,12 @@ class YouTubeSubtitleContainer {
           if (trackNumber === 1) {
             this.subtitle1Data = []
             this.lastProcessedSubtitle1Text = ""
+            this.stopSentenceRepeat()
           } else {
             this.subtitle2Data = []
             this.lastProcessedSubtitle2Text = ""
+            this.isAsrRomajiTrackActive = false
+            this.refreshSubtitleTextStyles()
           }
           sendResponse({ success: true })
           return true
@@ -1936,6 +2190,7 @@ class YouTubeSubtitleContainer {
 
         this.subtitle1Data = adjustedCues
         this.lastProcessedSubtitle1Text = ""
+        this.stopSentenceRepeat()
         console.log(
           `[YouTube Subtitles] Loaded user subtitle: ${saved.fileName} (${adjustedCues.length} cues)`
         )
@@ -1944,6 +2199,51 @@ class YouTubeSubtitleContainer {
       }
     } catch (error) {
       console.error("[YouTube Subtitles] Failed to load user subtitle:", error)
+    }
+  }
+
+  private async loadSavedAsrSubtitles(videoId: string): Promise<void> {
+    try {
+      const key = `asrSubtitle_${videoId}`
+      const result = await chrome.storage.local.get([key])
+      const saved = result[key]
+
+      const normalizeCueText = (text: string) =>
+        String(text || "")
+          .replace(/\r?\n+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+      const normalizeCues = (cues: any[]) =>
+        cues.map((cue) => ({
+          ...cue,
+          text: normalizeCueText(cue?.text)
+        }))
+
+      const jaCues = Array.isArray(saved?.jaCues)
+        ? normalizeCues(saved.jaCues)
+        : []
+
+      if (jaCues.length > 0) {
+        this.subtitle1Data = jaCues
+        this.lastProcessedSubtitle1Text = ""
+        this.stopSentenceRepeat()
+      }
+
+      // ASR mode is JP-only for now. Keep track 2 empty.
+      this.subtitle2Data = []
+      this.lastProcessedSubtitle2Text = ""
+      this.isAsrRomajiTrackActive = false
+      this.refreshSubtitleTextStyles()
+
+      if (jaCues.length > 0) {
+        console.log(
+          `[YouTube Subtitles] Loaded ASR subtitles (JP-only): ja=${jaCues.length}`
+        )
+      } else {
+        console.log("[YouTube Subtitles] No saved ASR subtitles for this video")
+      }
+    } catch (error) {
+      console.error("[YouTube Subtitles] Failed to load saved ASR subtitles:", error)
     }
   }
 

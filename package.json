@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "plasmo dev",
     "build": "rm -rf build && plasmo build && mv build/chrome-mv3-prod build/prod && rm -rf build/chrome-mv3-dev 2>/dev/null; true",
-    "package": "plasmo package"
+    "package": "plasmo package",
+    "asr:local": "python3 scripts/local_asr_server.py"
   },
   "dependencies": {
     "@apollo/client": "^3.13.8",
@@ -42,7 +43,9 @@
       "cookies"
     ],
     "host_permissions": [
-      "*://www.youtube.com/*"
+      "*://www.youtube.com/*",
+      "http://127.0.0.1/*",
+      "http://localhost/*"
     ],
     "content_security_policy": {
       "extension_pages": "script-src 'self'; object-src 'self'"

@@ -10,8 +10,20 @@ import { SecureStorage } from "@plasmohq/storage/secure"
 import SubtitlesSection from "~components/SubtitlesSection"
 import UserSubtitleUpload from "~components/UserSubtitleUpload"
 import client from "~graphql"
+import { parseVTT, type SubtitleCue } from "~utils/subtitleParser"
 
 const BUNDAI_API_BASE_URL = "https://api.bundai.app"
+const LOCAL_ASR_BASE_URL = "http://127.0.0.1:3000/asr"
+type SubtitleMode = "api" | "user" | "asr"
+type AsrJobState = "idle" | "queued" | "running" | "done" | "failed"
+type AsrJobMeta = {
+  jobId: string
+  videoId: string
+  model: string
+  status: Exclude<AsrJobState, "idle">
+  updatedAt: number
+  error?: string | null
+}
 
 // Utility function to extract video ID from YouTube URLs
 function extractVideoId(url: string): string | null {
@@ -47,9 +59,18 @@ function MainPage({ onOpenTabs }) {
   const [isFetchingSubtitles, setIsFetchingSubtitles] = useState(false)
   const inFlightRequestsRef = useRef<Set<string>>(new Set())
 
-  // Subtitle mode: 'api' | 'user'
-  const [subtitleMode, setSubtitleMode] = useState<"api" | "user">("user")
+  // Subtitle mode: 'api' | 'user' | 'asr'
+  const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("user")
   const [showRefreshMessage, setShowRefreshMessage] = useState(false)
+  const [asrModel, setAsrModel] = useState("Qwen/Qwen3-ASR-0.6B")
+  const [asrIncludeRomaji, setAsrIncludeRomaji] = useState(true)
+  const [isGeneratingAsr, setIsGeneratingAsr] = useState(false)
+  const [isCheckingAsrJob, setIsCheckingAsrJob] = useState(false)
+  const [isLoadingAsr, setIsLoadingAsr] = useState(false)
+  const [asrOutputReady, setAsrOutputReady] = useState(false)
+  const [asrStatus, setAsrStatus] = useState("")
+  const [asrError, setAsrError] = useState<string | null>(null)
+  const [asrJobMeta, setAsrJobMeta] = useState<AsrJobMeta | null>(null)
 
   // WordCard styles state
   const [wordCardStyles, setWordCardStyles] = useState({
@@ -265,7 +286,7 @@ function MainPage({ onOpenTabs }) {
   }
 
   // Send mode change to background/content script
-  const notifySubtitleModeChange = async (mode: "api" | "user") => {
+  const notifySubtitleModeChange = async (mode: SubtitleMode) => {
     try {
       chrome.runtime.sendMessage(
         {
@@ -340,8 +361,8 @@ function MainPage({ onOpenTabs }) {
 
     // Load subtitle mode preference (migrate from old boolean if needed)
     secureStorage.get("subtitleMode").then((value) => {
-      if (value && ["api", "user"].includes(value as string)) {
-        setSubtitleMode(value as "api" | "user")
+      if (value && ["api", "user", "asr"].includes(value as string)) {
+        setSubtitleMode(value as SubtitleMode)
         console.log("[MainPage] subtitleMode:", value)
       } else {
         setSubtitleMode("api")
@@ -367,6 +388,14 @@ function MainPage({ onOpenTabs }) {
           ...(value as object)
         }))
         console.log("[MainPage] subtitleContainerStyles:", value)
+      }
+    })
+
+    secureStorage.get("asrIncludeRomaji").then((value) => {
+      if (typeof value === "boolean") {
+        setAsrIncludeRomaji(value)
+      } else {
+        setAsrIncludeRomaji(true)
       }
     })
   }, [secureReady, secureStorage])
@@ -398,7 +427,7 @@ function MainPage({ onOpenTabs }) {
     }
   }
 
-  const handleSubtitleModeChange = async (mode: "api" | "user") => {
+  const handleSubtitleModeChange = async (mode: SubtitleMode) => {
     console.log("[MainPage] subtitle mode changed ->", mode)
     setSubtitleMode(mode)
     await secureStorage.set("subtitleMode", mode)
@@ -519,7 +548,504 @@ function MainPage({ onOpenTabs }) {
     await fetchAndCacheSubtitles(currentVideoId)
   }
 
+  const handleAsrIncludeRomajiChange = async (enabled: boolean) => {
+    setAsrIncludeRomaji(enabled)
+    await secureStorage.set("asrIncludeRomaji", enabled)
+  }
+
+  const sendAsrCuesToContentScript = async (
+    jaCues: SubtitleCue[],
+    includeRomaji: boolean
+  ) => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (!tab?.id) {
+      throw new Error("No active tab found")
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      chrome.tabs.sendMessage(
+        tab.id as number,
+        {
+          action: "loadAsrSubtitle",
+          cues: jaCues,
+          includeRomaji
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message))
+            return
+          }
+          resolve()
+        }
+      )
+    })
+  }
+
+  const normalizeCueTextToSingleLine = (text: string): string => {
+    return text.replace(/\r?\n+/g, " ").replace(/\s+/g, " ").trim()
+  }
+
+  const normalizeCuesToSingleLine = (cues: SubtitleCue[]): SubtitleCue[] => {
+    return cues.map((cue) => ({
+      ...cue,
+      text: normalizeCueTextToSingleLine(cue.text || "")
+    }))
+  }
+
+  const fetchWithTimeout = async (
+    input: string,
+    init?: RequestInit,
+    timeoutMs: number = 15000
+  ) => {
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(input, {
+        ...init,
+        signal: controller.signal
+      })
+    } finally {
+      window.clearTimeout(timer)
+    }
+  }
+
+  const asrJobStorageKey = (videoId: string) => `asrJobMeta_${videoId}`
+
+  const coerceAsrJobStatus = (status: string): AsrJobMeta["status"] => {
+    if (status === "running" || status === "done" || status === "failed") {
+      return status
+    }
+    return "queued"
+  }
+
+  const saveAsrJobMeta = async (videoId: string, meta: AsrJobMeta) => {
+    setAsrJobMeta(meta)
+    await chrome.storage.local.set({ [asrJobStorageKey(videoId)]: meta })
+  }
+
+  const loadStoredAsrJobMeta = async (
+    videoId: string
+  ): Promise<AsrJobMeta | null> => {
+    const result = await chrome.storage.local.get([asrJobStorageKey(videoId)])
+    const stored = result[asrJobStorageKey(videoId)]
+    if (
+      stored &&
+      typeof stored.jobId === "string" &&
+      typeof stored.videoId === "string" &&
+      typeof stored.model === "string" &&
+      typeof stored.status === "string"
+    ) {
+      return {
+        jobId: stored.jobId,
+        videoId: stored.videoId,
+        model: stored.model,
+        status: coerceAsrJobStatus(stored.status),
+        updatedAt: Number(stored.updatedAt || Date.now()),
+        error: stored.error || null
+      }
+    }
+    return null
+  }
+
+  const getCachedAsrOutputSummary = async (
+    videoId: string,
+    model: string
+  ): Promise<{ ready: boolean; jaCueCount: number }> => {
+    const cachedQuery = new URLSearchParams({
+      videoId,
+      model,
+      cachedOnly: "1"
+    })
+    const cachedResponse = await fetchWithTimeout(
+      `${LOCAL_ASR_BASE_URL}/subtitles?${cachedQuery.toString()}`,
+      undefined,
+      5000
+    )
+
+    if (!cachedResponse.ok) {
+      return { ready: false, jaCueCount: 0 }
+    }
+
+    const cachedPayload = await cachedResponse.json()
+    const cachedJaVtt =
+      typeof cachedPayload.jaVtt === "string" ? cachedPayload.jaVtt : ""
+    const cachedJaCount = parseVTT(cachedJaVtt).length
+
+    return {
+      ready: cachedJaCount > 0,
+      jaCueCount: cachedJaCount
+    }
+  }
+
+  const toFriendlyContentScriptError = (error: unknown): string => {
+    const message = String((error as any)?.message || error || "")
+    if (
+      message.includes("Receiving end does not exist") ||
+      message.includes("Could not establish connection")
+    ) {
+      return "YouTube subtitle receiver is not ready. Refresh the video tab once, then click Load Generated JP again."
+    }
+    return message || "Failed to communicate with the YouTube page."
+  }
+
+  const startAsrJobInBackground = async () => {
+    if (!currentVideoId) return
+    if (isGeneratingAsr) return
+
+    setIsGeneratingAsr(true)
+    setAsrError(null)
+    setAsrStatus("Checking local ASR service...")
+
+    try {
+      const health = await fetchWithTimeout(`${LOCAL_ASR_BASE_URL}/health`)
+      if (!health.ok) {
+        throw new Error(
+          `Local ASR service is not reachable (${health.status}). Make sure ~/projects/server is running with /asr endpoints.`
+        )
+      }
+
+      const cookieHeader = await getYouTubeCookieHeader()
+      const query = new URLSearchParams({
+        videoId: currentVideoId,
+        model: asrModel
+      })
+
+      setAsrStatus(`Generating subtitles with Qwen (${asrModel})...`)
+
+      const headers: Record<string, string> = {}
+      if (cookieHeader) {
+        headers["X-Youtube-Cookies"] = cookieHeader
+      }
+
+      const response = await fetchWithTimeout(
+        `${LOCAL_ASR_BASE_URL}/jobs/start?${query}`,
+        { headers }
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || `ASR job start failed (${response.status})`)
+      }
+
+      const payload = await response.json()
+      if (!payload?.ok || !payload?.job?.jobId) {
+        throw new Error("ASR job did not return a valid jobId.")
+      }
+
+      const nextMeta: AsrJobMeta = {
+        jobId: String(payload.job.jobId),
+        videoId: currentVideoId,
+        model: String(payload.job.model || asrModel),
+        status: coerceAsrJobStatus(String(payload.job.status || "queued")),
+        updatedAt: Date.now(),
+        error: payload.job.error || null
+      }
+
+      await saveAsrJobMeta(currentVideoId, nextMeta)
+      setAsrOutputReady(false)
+      setAsrStatus(
+        `ASR job started (${nextMeta.status}). You can close this popup; status auto-refreshes when reopened.`
+      )
+    } catch (error: any) {
+      console.error("[MainPage] ASR generation error:", error)
+      setAsrError(error?.message || "Failed to start local ASR job.")
+      setAsrStatus("")
+    } finally {
+      setIsGeneratingAsr(false)
+    }
+  }
+
+  const checkAsrJobStatus = async () => {
+    if (!currentVideoId) return
+    if (isCheckingAsrJob) return
+
+    let releaseCheckingGuard: number | null = null
+    setIsCheckingAsrJob(true)
+    setAsrError(null)
+    releaseCheckingGuard = window.setTimeout(() => {
+      setIsCheckingAsrJob(false)
+    }, 30000)
+
+    try {
+      let meta = asrJobMeta
+      if (!meta || meta.videoId !== currentVideoId) {
+        meta = await loadStoredAsrJobMeta(currentVideoId)
+      }
+
+      if (!meta) {
+        const latestQuery = new URLSearchParams({
+          videoId: currentVideoId,
+          model: asrModel
+        })
+        const latestResponse = await fetchWithTimeout(
+          `${LOCAL_ASR_BASE_URL}/jobs/latest?${latestQuery.toString()}`
+        )
+        if (latestResponse.ok) {
+          const latestPayload = await latestResponse.json()
+          if (latestPayload?.job?.jobId) {
+            meta = {
+              jobId: String(latestPayload.job.jobId),
+              videoId: currentVideoId,
+              model: String(latestPayload.job.model || asrModel),
+              status: coerceAsrJobStatus(
+                String(latestPayload.job.status || "queued")
+              ),
+              updatedAt: Date.now(),
+              error: latestPayload.job.error || null
+            }
+          }
+        }
+      }
+
+      if (!meta) {
+        throw new Error("No ASR job found for this video. Start a job first.")
+      }
+
+      const statusQuery = new URLSearchParams({ jobId: meta.jobId })
+      const response = await fetchWithTimeout(
+        `${LOCAL_ASR_BASE_URL}/jobs/status?${statusQuery.toString()}`
+      )
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || `ASR status check failed (${response.status})`)
+      }
+
+      const payload = await response.json()
+      const job = payload?.job
+      if (!job?.jobId) {
+        throw new Error("Invalid ASR status response.")
+      }
+
+      let nextMeta: AsrJobMeta = {
+        jobId: String(job.jobId),
+        videoId: currentVideoId,
+        model: String(job.model || meta.model),
+        status: coerceAsrJobStatus(String(job.status || "queued")),
+        updatedAt: Date.now(),
+        error: job.error || null
+      }
+
+      if (nextMeta.status === "queued" || nextMeta.status === "running") {
+        try {
+          const cached = await getCachedAsrOutputSummary(
+            currentVideoId,
+            nextMeta.model
+          )
+          if (cached.ready) {
+            nextMeta = {
+              ...nextMeta,
+              status: "done",
+              updatedAt: Date.now(),
+              error: null
+            }
+            await saveAsrJobMeta(currentVideoId, nextMeta)
+            setAsrOutputReady(true)
+            setAsrStatus(
+              `ASR output is available: ja=${cached.jaCueCount}. Click "Load Generated JP".`
+            )
+            return
+          }
+        } catch (cachedCheckError) {
+          console.warn(
+            "[MainPage] cached ASR availability check failed:",
+            cachedCheckError
+          )
+        }
+      }
+
+      await saveAsrJobMeta(currentVideoId, nextMeta)
+
+      if (nextMeta.status === "done") {
+        const jaCount = Number(job?.resultSummary?.jaCueCount || 0)
+        setAsrOutputReady(true)
+        setAsrStatus(
+          `ASR done${jaCount ? `: ja=${jaCount}` : ""}. Click "Load Generated JP".`
+        )
+      } else if (nextMeta.status === "failed") {
+        setAsrOutputReady(false)
+        setAsrError(nextMeta.error || "ASR job failed.")
+        setAsrStatus("")
+      } else {
+        setAsrOutputReady(false)
+        setAsrStatus(
+          `ASR job is ${nextMeta.status}. Status auto-refreshes while this popup is open.`
+        )
+      }
+    } catch (error: any) {
+      console.error("[MainPage] ASR status error:", error)
+      setAsrError(error?.message || "Failed to check ASR job status.")
+    } finally {
+      if (releaseCheckingGuard != null) {
+        window.clearTimeout(releaseCheckingGuard)
+      }
+      setIsCheckingAsrJob(false)
+    }
+  }
+
+  const loadGeneratedAsrSubtitles = async () => {
+    if (!currentVideoId) return
+    if (isLoadingAsr) return
+
+    setIsLoadingAsr(true)
+    setAsrError(null)
+    setAsrStatus("Loading generated JP subtitles...")
+
+    try {
+      const modelToLoad = asrJobMeta?.model || asrModel
+      const query = new URLSearchParams({
+        videoId: currentVideoId,
+        model: modelToLoad,
+        cachedOnly: "1"
+      })
+
+      const response = await fetchWithTimeout(
+        `${LOCAL_ASR_BASE_URL}/subtitles?${query.toString()}`
+      )
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(
+          errorText ||
+            "Generated subtitles are not ready yet. Check status and try again."
+        )
+      }
+
+      const payload = await response.json()
+      const jaVtt = typeof payload.jaVtt === "string" ? payload.jaVtt : ""
+      const jaCues = normalizeCuesToSingleLine(parseVTT(jaVtt))
+      if (jaCues.length === 0) {
+        throw new Error("Cached ASR output is empty.")
+      }
+
+      const key = `asrSubtitle_${currentVideoId}`
+      await chrome.storage.local.set({
+        [key]: {
+          videoId: currentVideoId,
+          model: modelToLoad,
+          jpOnly: true,
+          generatedAt: Date.now(),
+          jaVtt,
+          jaCues
+        }
+      })
+
+      await sendAsrCuesToContentScript(jaCues, asrIncludeRomaji)
+
+      setAsrOutputReady(true)
+      if (
+        asrJobMeta &&
+        asrJobMeta.videoId === currentVideoId &&
+        asrJobMeta.status !== "done"
+      ) {
+        await saveAsrJobMeta(currentVideoId, {
+          ...asrJobMeta,
+          status: "done",
+          updatedAt: Date.now(),
+          error: null
+        })
+      }
+
+      setAsrStatus(`Loaded generated JP subtitles: ja=${jaCues.length}`)
+    } catch (error: any) {
+      console.error("[MainPage] ASR load error:", error)
+      setAsrError(toFriendlyContentScriptError(error))
+      setAsrStatus("")
+    } finally {
+      setIsLoadingAsr(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!currentVideoId) {
+      setAsrJobMeta(null)
+      setAsrOutputReady(false)
+      return
+    }
+
+    let cancelled = false
+
+    const hydrateAsrJobState = async () => {
+      try {
+        const storedMeta = await loadStoredAsrJobMeta(currentVideoId)
+        if (cancelled) return
+
+        setAsrJobMeta(storedMeta)
+
+        const modelToCheck = storedMeta?.model || asrModel
+        const cached = await getCachedAsrOutputSummary(currentVideoId, modelToCheck)
+        if (cancelled) return
+
+        setAsrOutputReady(cached.ready)
+
+        if (
+          cached.ready &&
+          storedMeta &&
+          storedMeta.videoId === currentVideoId &&
+          storedMeta.status !== "done"
+        ) {
+          const nextMeta: AsrJobMeta = {
+            ...storedMeta,
+            status: "done",
+            updatedAt: Date.now(),
+            error: null
+          }
+          await saveAsrJobMeta(currentVideoId, nextMeta)
+          if (cancelled) return
+        }
+      } catch {
+        if (!cancelled) {
+          setAsrJobMeta(null)
+          setAsrOutputReady(false)
+        }
+      }
+    }
+
+    hydrateAsrJobState()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentVideoId, asrModel])
+
+  useEffect(() => {
+    if (subtitleMode !== "asr") return
+    if (!currentVideoId) return
+    if (!asrJobMeta || asrJobMeta.videoId !== currentVideoId) return
+    if (!(asrJobMeta.status === "queued" || asrJobMeta.status === "running"))
+      return
+    if (isCheckingAsrJob || isGeneratingAsr || isLoadingAsr) return
+
+    const timer = window.setTimeout(() => {
+      checkAsrJobStatus()
+    }, 2500)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [
+    subtitleMode,
+    currentVideoId,
+    asrJobMeta?.jobId,
+    asrJobMeta?.videoId,
+    asrJobMeta?.status,
+    asrJobMeta?.updatedAt,
+    isCheckingAsrJob,
+    isGeneratingAsr,
+    isLoadingAsr
+  ])
+
   const isYouTubePage = currentUrl.includes("youtube.com")
+  const hasAsrJobForCurrentVideo =
+    !!currentVideoId && !!asrJobMeta && asrJobMeta.videoId === currentVideoId
+  const asrJobState: AsrJobState = hasAsrJobForCurrentVideo
+    ? asrJobMeta?.status || "idle"
+    : "idle"
+  const isAsrJobRunning = asrJobState === "queued" || asrJobState === "running"
+  const isAsrBusy = isGeneratingAsr || isCheckingAsrJob || isLoadingAsr
+  const canStartAsrJob = !!currentVideoId && !isAsrBusy && !isAsrJobRunning
+  const canLoadGeneratedAsr =
+    !!currentVideoId &&
+    !isAsrBusy &&
+    (asrOutputReady || (hasAsrJobForCurrentVideo && asrJobState === "done"))
 
   return (
     <div className="w-72 p-4 bg-yellow-400 text-black flex flex-col gap-4">
@@ -733,6 +1259,20 @@ function MainPage({ onOpenTabs }) {
                 </label>
                 <p className="text-xs text-gray-600 ml-6">
                   Fetch from Bundai API
+                </p>
+
+                <label className="flex items-center gap-2 cursor-pointer mt-1">
+                  <input
+                    type="radio"
+                    name="subtitleMode"
+                    checked={subtitleMode === "asr"}
+                    onChange={() => handleSubtitleModeChange("asr")}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm font-medium">Local ASR (Qwen)</span>
+                </label>
+                <p className="text-xs text-gray-600 ml-6">
+                  Generate subtitles on your Mac (localhost)
                 </p>
               </>
             )}
@@ -966,6 +1506,126 @@ function MainPage({ onOpenTabs }) {
               </button>
             </div>
           )}
+        </div>
+      ) : enabled &&
+        isYouTubePage &&
+        currentVideoId &&
+        subtitleMode === "asr" ? (
+        <div className="mt-4 bg-white bg-opacity-50 p-3 rounded border-2 border-black">
+          <h3 className="text-black font-bold mb-2">Generate Subtitles (Local ASR)</h3>
+          <p className="text-xs text-gray-700 mb-3">
+            Uses local Qwen ASR via <code>127.0.0.1:3000/asr</code>. No third-party
+            API is used.
+          </p>
+          <p className="text-xs text-gray-700 mb-3">
+            ASR mode is JP-only and normalized to one-line subtitle text (Netflix-style).
+          </p>
+
+          <div className="mb-3">
+            <label className="text-xs font-semibold block mb-1">Model</label>
+            <select
+              value={asrModel}
+              onChange={(e) => setAsrModel(e.target.value)}
+              className="w-full px-2 py-1 rounded border border-black text-sm bg-white">
+              <option value="Qwen/Qwen3-ASR-0.6B">Qwen3-ASR-0.6B (Fast)</option>
+              <option value="Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B (More accurate)</option>
+            </select>
+          </div>
+
+          <div className="mb-3">
+            <label className="text-xs font-semibold block mb-1">Romaji Track</label>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  name="asrRomaji"
+                  checked={asrIncludeRomaji}
+                  onChange={() => handleAsrIncludeRomajiChange(true)}
+                />
+                On
+              </label>
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  name="asrRomaji"
+                  checked={!asrIncludeRomaji}
+                  onChange={() => handleAsrIncludeRomajiChange(false)}
+                />
+                Off
+              </label>
+            </div>
+          </div>
+
+          {asrError && <p className="text-xs text-red-700 mb-2">{asrError}</p>}
+          {asrStatus && <p className="text-xs text-green-700 mb-2">{asrStatus}</p>}
+
+          {asrJobMeta && asrJobMeta.videoId === currentVideoId && (
+            <div className="text-xs text-gray-800 bg-yellow-100 border border-yellow-300 rounded p-2 mb-2">
+              <div>
+                <span className="font-semibold">Job:</span> {asrJobMeta.jobId}
+              </div>
+              <div>
+                <span className="font-semibold">Status:</span> {asrJobMeta.status}
+              </div>
+              <div>
+                <span className="font-semibold">Model:</span> {asrJobMeta.model}
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={startAsrJobInBackground}
+            disabled={!canStartAsrJob}
+            className="w-full px-3 py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 disabled:bg-gray-400">
+            {isGeneratingAsr
+              ? "Starting..."
+              : isAsrJobRunning
+                ? "Job Running..."
+                : "Start Background ASR Job"}
+          </button>
+
+          <button
+            onClick={loadGeneratedAsrSubtitles}
+            disabled={!canLoadGeneratedAsr}
+            className="w-full mt-2 px-3 py-2 bg-green-600 text-white rounded font-semibold hover:bg-green-700 disabled:bg-gray-400">
+            {isLoadingAsr
+              ? "Loading..."
+              : canLoadGeneratedAsr
+                ? asrIncludeRomaji
+                  ? "Load Generated JP + Romaji"
+                  : "Load Generated JP"
+                : asrIncludeRomaji
+                  ? "Load JP + Romaji (Not Ready)"
+                  : "Load JP (Not Ready)"}
+          </button>
+
+          <p className="text-xs text-gray-600 mt-2">
+            First run can take time because audio download + ASR happens on your
+            machine.
+          </p>
+          <p className="text-xs text-gray-700 mt-1">
+            Job state:{" "}
+            <span className="font-semibold">
+              {hasAsrJobForCurrentVideo ? asrJobState : "idle"}
+            </span>
+            {" | "}
+            Output:{" "}
+            <span className="font-semibold">
+              {asrOutputReady ? "ready" : "not ready"}
+            </span>
+            {" | "}
+            Status check:{" "}
+            <span className="font-semibold">
+              {isCheckingAsrJob ? "auto-checking" : "auto"}
+            </span>
+          </p>
+          <p className="text-xs text-green-800 mt-2">
+            After you start a job, it runs on the local server in the background.
+            You can close the popup and come back later.
+          </p>
+          <p className="text-xs text-gray-600 mt-1">
+            Flow: Start job -&gt; wait for auto status -&gt; Load generated subtitles.
+          </p>
         </div>
       ) : enabled && subtitleMode === "user" ? (
         <UserSubtitleUpload
