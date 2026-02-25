@@ -14,8 +14,16 @@ import { parseVTT, type SubtitleCue } from "~utils/subtitleParser"
 
 const BUNDAI_API_BASE_URL = "https://api.bundai.app"
 const LOCAL_ASR_BASE_URL = "http://127.0.0.1:3000/asr"
+const LEGACY_LOCAL_ASR_BASE_URL = "http://127.0.0.1:8765"
 type SubtitleMode = "api" | "user" | "asr"
 type AsrJobState = "idle" | "queued" | "running" | "done" | "failed"
+type AsrBackendKind = "jobs" | "legacy"
+type AsrBackendMode = "local" | "browser"
+type BrowserWhisperModel = "Xenova/whisper-tiny" | "Xenova/whisper-base"
+type AsrBackend = {
+  baseUrl: string
+  kind: AsrBackendKind
+}
 type AsrJobMeta = {
   jobId: string
   videoId: string
@@ -58,11 +66,26 @@ function MainPage({ onOpenTabs }) {
   const [subtitleError, setSubtitleError] = useState<string | null>(null)
   const [isFetchingSubtitles, setIsFetchingSubtitles] = useState(false)
   const inFlightRequestsRef = useRef<Set<string>>(new Set())
+  const asrBackendRef = useRef<AsrBackend | null>(null)
+  const browserWhisperRef = useRef<{
+    model: BrowserWhisperModel | null
+    transcriber: any | null
+  }>({
+    model: null,
+    transcriber: null
+  })
+  const whisperWorkerRef = useRef<Worker | null>(null)
+  const whisperWorkerReadyRef = useRef(false)
+  const whisperWorkerReqIdRef = useRef(0)
 
   // Subtitle mode: 'api' | 'user' | 'asr'
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("user")
   const [showRefreshMessage, setShowRefreshMessage] = useState(false)
   const [asrModel, setAsrModel] = useState("Qwen/Qwen3-ASR-0.6B")
+  const [asrBackendMode, setAsrBackendMode] =
+    useState<AsrBackendMode>("local")
+  const [browserWhisperModel, setBrowserWhisperModel] =
+    useState<BrowserWhisperModel>("Xenova/whisper-tiny")
   const [asrIncludeRomaji, setAsrIncludeRomaji] = useState(true)
   const [isGeneratingAsr, setIsGeneratingAsr] = useState(false)
   const [isCheckingAsrJob, setIsCheckingAsrJob] = useState(false)
@@ -164,26 +187,43 @@ function MainPage({ onOpenTabs }) {
 
     try {
       const cookieHeader = await getYouTubeCookieHeader()
+      if (!cookieHeader) {
+        throw new Error(
+          "Could not read YouTube cookies. Open the video on youtube.com and try again."
+        )
+      }
 
       console.log("[MainPage] Fetching subtitles for video:", videoId)
       console.log("[MainPage] Cookie header length:", cookieHeader?.length || 0)
 
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json"
-      }
-
-      if (cookieHeader) {
-        headers["X-Youtube-Cookies"] = cookieHeader
-      }
-
-      const response = await fetch(
-        `${BUNDAI_API_BASE_URL}/subtitles/${videoId}?subtitle_format=vtt`,
-        { headers }
-      )
+      const endpoint = `${BUNDAI_API_BASE_URL}/subtitles/${videoId}?subtitle_format=vtt`
+      const response = await fetch(endpoint, {
+        headers: {
+          "X-Youtube-Cookies": cookieHeader
+        }
+      })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || "Failed to fetch subtitles.")
+        let errorMessage = `Failed to fetch subtitles (HTTP ${response.status})`
+        try {
+          const contentType = response.headers.get("content-type") || ""
+          if (contentType.includes("application/json")) {
+            const errorData = await response.json()
+            errorMessage =
+              errorData?.detail ||
+              errorData?.message ||
+              errorData?.error ||
+              errorMessage
+          } else {
+            const rawText = await response.text()
+            if (rawText?.trim()) {
+              errorMessage = `${errorMessage}: ${rawText.slice(0, 180)}`
+            }
+          }
+        } catch {
+          // Keep fallback message
+        }
+        throw new Error(errorMessage)
       }
 
       const raw = await response.json()
@@ -260,7 +300,9 @@ function MainPage({ onOpenTabs }) {
       console.log("Fetched and cached subtitles for video:", videoId)
     } catch (error) {
       console.error("Error fetching subtitles:", error)
-      setSubtitleError(error.message || "Failed to fetch subtitles")
+      const message =
+        error instanceof Error ? error.message : "Failed to fetch subtitles"
+      setSubtitleError(message)
     } finally {
       setIsFetchingSubtitles(false)
       inFlightRequestsRef.current.delete(videoId)
@@ -270,9 +312,25 @@ function MainPage({ onOpenTabs }) {
   const getYouTubeCookieHeader = async (): Promise<string> => {
     try {
       console.log("[MainPage] collecting YouTube cookies")
-      const cookies = await chrome.cookies.getAll({
-        url: "https://www.youtube.com"
-      })
+      const [cookiesWWW, cookiesRoot] = await Promise.all([
+        chrome.cookies.getAll({
+          url: "https://www.youtube.com"
+        }),
+        chrome.cookies.getAll({
+          url: "https://youtube.com"
+        })
+      ])
+
+      const merged = [...cookiesWWW, ...cookiesRoot]
+      const uniqueCookies = new Map<string, chrome.cookies.Cookie>()
+      for (const cookie of merged) {
+        const key = `${cookie.name}|${cookie.domain}|${cookie.path}`
+        if (!uniqueCookies.has(key)) {
+          uniqueCookies.set(key, cookie)
+        }
+      }
+
+      const cookies = Array.from(uniqueCookies.values())
       const header = cookies
         .filter((c) => !!c.name && c.value != null)
         .map((c) => `${c.name}=${c.value}`)
@@ -359,14 +417,29 @@ function MainPage({ onOpenTabs }) {
       console.log("[MainPage] extensionEnabled:", enabledValue)
     })
 
-    // Load subtitle mode preference (migrate from old boolean if needed)
-    secureStorage.get("subtitleMode").then((value) => {
-      if (value && ["api", "user", "asr"].includes(value as string)) {
-        setSubtitleMode(value as SubtitleMode)
-        console.log("[MainPage] subtitleMode:", value)
-      } else {
-        setSubtitleMode("api")
+    // Load subtitle mode from background (source of truth), fallback to storage.
+    chrome.runtime.sendMessage({ action: "getSubtitleMode" }, (response) => {
+      if (
+        !chrome.runtime.lastError &&
+        response?.mode &&
+        ["api", "user", "asr"].includes(response.mode)
+      ) {
+        setSubtitleMode(response.mode as SubtitleMode)
+        console.log("[MainPage] subtitleMode (background):", response.mode)
+        secureStorage.set("subtitleMode", response.mode).catch(console.error)
+        return
       }
+
+      secureStorage.get("subtitleMode").then((value) => {
+        if (value && ["api", "user", "asr"].includes(value as string)) {
+          setSubtitleMode(value as SubtitleMode)
+          console.log("[MainPage] subtitleMode (storage):", value)
+        } else {
+          setSubtitleMode("api")
+          secureStorage.set("subtitleMode", "api").catch(console.error)
+          notifySubtitleModeChange("api")
+        }
+      })
     })
 
     // Load WordCard styles
@@ -396,6 +469,22 @@ function MainPage({ onOpenTabs }) {
         setAsrIncludeRomaji(value)
       } else {
         setAsrIncludeRomaji(true)
+      }
+    })
+
+    secureStorage.get("asrBackendMode").then((value) => {
+      if (value === "local" || value === "browser") {
+        setAsrBackendMode(value)
+      } else {
+        setAsrBackendMode("local")
+      }
+    })
+
+    secureStorage.get("browserWhisperModel").then((value) => {
+      if (value === "Xenova/whisper-tiny" || value === "Xenova/whisper-base") {
+        setBrowserWhisperModel(value)
+      } else {
+        setBrowserWhisperModel("Xenova/whisper-tiny")
       }
     })
   }, [secureReady, secureStorage])
@@ -433,6 +522,20 @@ function MainPage({ onOpenTabs }) {
     await secureStorage.set("subtitleMode", mode)
     await notifySubtitleModeChange(mode)
     setShowRefreshMessage(true)
+  }
+
+  const handleAsrBackendModeChange = async (mode: AsrBackendMode) => {
+    setAsrBackendMode(mode)
+    await secureStorage.set("asrBackendMode", mode)
+    setAsrError(null)
+    setAsrStatus("")
+  }
+
+  const handleBrowserWhisperModelChange = async (model: BrowserWhisperModel) => {
+    setBrowserWhisperModel(model)
+    await secureStorage.set("browserWhisperModel", model)
+    setAsrError(null)
+    setAsrStatus("")
   }
 
   const handleWordCardStyleChange = async (
@@ -553,31 +656,68 @@ function MainPage({ onOpenTabs }) {
     await secureStorage.set("asrIncludeRomaji", enabled)
   }
 
-  const sendAsrCuesToContentScript = async (
-    jaCues: SubtitleCue[],
-    includeRomaji: boolean
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+
+  const sendMessageToActiveTabWithRetry = async (
+    payload: Record<string, any>,
+    maxAttempts: number = 8,
+    delayMs: number = 400
   ) => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     if (!tab?.id) {
       throw new Error("No active tab found")
     }
 
-    await new Promise<void>((resolve, reject) => {
-      chrome.tabs.sendMessage(
-        tab.id as number,
-        {
-          action: "loadAsrSubtitle",
-          cues: jaCues,
-          includeRomaji
-        },
-        () => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message))
-            return
-          }
-          resolve()
+    let lastError: Error | null = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          chrome.tabs.sendMessage(tab.id as number, payload, () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message))
+              return
+            }
+            resolve()
+          })
+        })
+        return
+      } catch (error: any) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        const msg = String(lastError?.message || "")
+        const isReceiverNotReady =
+          msg.includes("Receiving end does not exist") ||
+          msg.includes("Could not establish connection")
+        if (!isReceiverNotReady || attempt === maxAttempts) {
+          break
         }
-      )
+        await sleep(delayMs)
+      }
+    }
+
+    throw (
+      lastError ||
+      new Error("Failed to communicate with active tab after retries.")
+    )
+  }
+
+  const sendAsrCuesToContentScript = async (
+    jaCues: SubtitleCue[],
+    includeRomaji: boolean,
+    videoId: string
+  ) => {
+    await sendMessageToActiveTabWithRetry({
+      action: "loadAsrSubtitle",
+      cues: jaCues,
+      includeRomaji,
+      videoId
+    })
+  }
+
+  const clearAsrCuesInContentScript = async (videoId: string) => {
+    await sendMessageToActiveTabWithRetry({
+      action: "clearAsrSubtitle",
+      videoId
     })
   }
 
@@ -590,6 +730,88 @@ function MainPage({ onOpenTabs }) {
       ...cue,
       text: normalizeCueTextToSingleLine(cue.text || "")
     }))
+  }
+
+  const splitJapaneseTextIntoPhrases = (text: string): string[] => {
+    const normalized = normalizeCueTextToSingleLine(text)
+    if (!normalized) return []
+    return normalized
+      .split(/(?<=[。！？!?])/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+  }
+
+  const buildCuesFromWordChunks = (
+    chunks: Array<{ text?: string; timestamp?: [number | null, number | null] }>,
+    baseTime: number,
+    captureSeconds: number
+  ): SubtitleCue[] => {
+    const cues: SubtitleCue[] = []
+    let active: SubtitleCue | null = null
+
+    const flush = () => {
+      if (!active) return
+      active.text = normalizeCueTextToSingleLine(active.text)
+      if (active.text) {
+        cues.push(active)
+      }
+      active = null
+    }
+
+    for (const chunk of chunks) {
+      const text = normalizeCueTextToSingleLine(String(chunk?.text || ""))
+      if (!text) continue
+
+      const ts = Array.isArray(chunk?.timestamp) ? chunk.timestamp : []
+      const startRel = Number(ts?.[0])
+      const endRelRaw = Number(ts?.[1])
+      if (!Number.isFinite(startRel)) continue
+      const endRel =
+        Number.isFinite(endRelRaw) && endRelRaw > startRel
+          ? endRelRaw
+          : startRel + 0.8
+
+      const start = baseTime + startRel
+      const end = baseTime + endRel
+
+      if (!active) {
+        active = { start, end, text }
+        continue
+      }
+
+      const duration = end - active.start
+      const shouldSplit =
+        duration >= 3.5 ||
+        /[。！？!?]$/.test(active.text) ||
+        start - active.end > 0.5
+
+      if (shouldSplit) {
+        flush()
+        active = { start, end, text }
+      } else {
+        active.end = Math.max(active.end, end)
+        active.text += text
+      }
+    }
+
+    flush()
+
+    if (cues.length > 0) return cues
+
+    const fallbackText = normalizeCueTextToSingleLine(
+      chunks.map((c) => String(c?.text || "")).join("")
+    )
+    const phrases = splitJapaneseTextIntoPhrases(fallbackText)
+    if (!phrases.length) return []
+    const perPhrase = Math.max(1.4, captureSeconds / phrases.length)
+    return phrases.map((phrase, idx) => {
+      const start = baseTime + idx * perPhrase
+      return {
+        start,
+        end: start + perPhrase,
+        text: phrase
+      }
+    })
   }
 
   const fetchWithTimeout = async (
@@ -609,7 +831,442 @@ function MainPage({ onOpenTabs }) {
     }
   }
 
+  const resolveAsrBackend = async (
+    forceRefresh: boolean = false
+  ): Promise<AsrBackend> => {
+    if (!forceRefresh && asrBackendRef.current) {
+      return asrBackendRef.current
+    }
+
+    const candidates: AsrBackend[] = [
+      { baseUrl: LOCAL_ASR_BASE_URL, kind: "jobs" },
+      { baseUrl: LEGACY_LOCAL_ASR_BASE_URL, kind: "legacy" }
+    ]
+
+    for (const candidate of candidates) {
+      try {
+        const health = await fetchWithTimeout(
+          `${candidate.baseUrl}/health`,
+          undefined,
+          5000
+        )
+        if (health.ok) {
+          asrBackendRef.current = candidate
+          return candidate
+        }
+      } catch {
+        // Try next backend candidate.
+      }
+    }
+
+    throw new Error(
+      "Local ASR service is not reachable. Start either 127.0.0.1:3000/asr (jobs server) or run `pnpm asr:local` for 127.0.0.1:8765."
+    )
+  }
+
+  const normalizeLegacyAsrModel = (model: string): string => {
+    const whisperModels = new Set([
+      "tiny",
+      "base",
+      "small",
+      "medium",
+      "large",
+      "large-v2",
+      "large-v3",
+      "turbo"
+    ])
+    return whisperModels.has(model) ? model : "base"
+  }
+
+  const getCurrentPlaybackStateFromContentScript = async (): Promise<{
+    currentTime: number
+  }> => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (!tab?.id) {
+      return { currentTime: 0 }
+    }
+
+    return await new Promise((resolve) => {
+      chrome.tabs.sendMessage(
+        tab.id as number,
+        { action: "getPlaybackState" },
+        (response) => {
+          if (chrome.runtime.lastError || !response?.success) {
+            resolve({ currentTime: 0 })
+            return
+          }
+          const currentTime = Number(response.currentTime)
+          resolve({ currentTime: Number.isFinite(currentTime) ? currentTime : 0 })
+        }
+      )
+    })
+  }
+
+  const captureTabAudioBlob = async (durationMs: number): Promise<Blob> => {
+    return await new Promise((resolve, reject) => {
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.tabCapture ||
+        typeof chrome.tabCapture.capture !== "function"
+      ) {
+        reject(
+          new Error(
+            "tabCapture is not available. Ensure the extension has tabCapture permission."
+          )
+        )
+        return
+      }
+
+      chrome.tabCapture.capture(
+        {
+          audio: true,
+          video: false
+        } as any,
+        (stream) => {
+          if (chrome.runtime.lastError || !stream) {
+            reject(
+              new Error(
+                chrome.runtime.lastError?.message ||
+                  "Failed to capture tab audio."
+              )
+            )
+            return
+          }
+
+          const mediaStream = stream as MediaStream
+          const mimeTypeCandidates = [
+            "audio/webm;codecs=opus",
+            "audio/webm"
+          ]
+          const selectedMimeType =
+            mimeTypeCandidates.find((candidate) =>
+              MediaRecorder.isTypeSupported(candidate)
+            ) || ""
+
+          let recorder: MediaRecorder
+          try {
+            recorder = selectedMimeType
+              ? new MediaRecorder(mediaStream, { mimeType: selectedMimeType })
+              : new MediaRecorder(mediaStream)
+          } catch (error) {
+            mediaStream.getTracks().forEach((track) => track.stop())
+            reject(new Error(`Unable to initialize MediaRecorder: ${error}`))
+            return
+          }
+
+          const chunks: Blob[] = []
+          recorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+              chunks.push(event.data)
+            }
+          }
+
+          recorder.onerror = (event: any) => {
+            mediaStream.getTracks().forEach((track) => track.stop())
+            reject(
+              new Error(
+                event?.error?.message || "MediaRecorder failed while capturing."
+              )
+            )
+          }
+
+          recorder.onstop = () => {
+            mediaStream.getTracks().forEach((track) => track.stop())
+            resolve(new Blob(chunks, { type: selectedMimeType || "audio/webm" }))
+          }
+
+          recorder.start(1000)
+          window.setTimeout(() => {
+            if (recorder.state !== "inactive") {
+              recorder.stop()
+            }
+          }, durationMs)
+        }
+      )
+    })
+  }
+
+  const resampleTo16k = (
+    input: Float32Array,
+    inputSampleRate: number
+  ): Float32Array => {
+    if (inputSampleRate === 16000) return input
+    if (!input.length) return input
+
+    const ratio = inputSampleRate / 16000
+    const outputLength = Math.max(1, Math.round(input.length / ratio))
+    const output = new Float32Array(outputLength)
+
+    for (let i = 0; i < outputLength; i++) {
+      const position = i * ratio
+      const left = Math.floor(position)
+      const right = Math.min(left + 1, input.length - 1)
+      const weight = position - left
+      output[i] = input[left] * (1 - weight) + input[right] * weight
+    }
+
+    return output
+  }
+
+  const decodeAudioBlobTo16kMono = async (audioBlob: Blob) => {
+    const arrayBuffer = await audioBlob.arrayBuffer()
+    const audioContext = new AudioContext()
+    try {
+      const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0))
+      const channelCount = decoded.numberOfChannels || 1
+      const mono = new Float32Array(decoded.length)
+
+      for (let channel = 0; channel < channelCount; channel++) {
+        const channelData = decoded.getChannelData(channel)
+        for (let i = 0; i < decoded.length; i++) {
+          mono[i] += channelData[i] / channelCount
+        }
+      }
+
+      return resampleTo16k(mono, decoded.sampleRate)
+    } finally {
+      await audioContext.close()
+    }
+  }
+
+  const toVttTimestamp = (seconds: number): string => {
+    const safe = Math.max(0, seconds)
+    const hours = Math.floor(safe / 3600)
+    const minutes = Math.floor((safe % 3600) / 60)
+    const wholeSeconds = Math.floor(safe % 60)
+    const milliseconds = Math.round((safe - Math.floor(safe)) * 1000)
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(wholeSeconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`
+  }
+
+  const cuesToVtt = (cues: SubtitleCue[]): string => {
+    const lines = ["WEBVTT", ""]
+    for (const cue of cues) {
+      lines.push(
+        `${toVttTimestamp(cue.start)} --> ${toVttTimestamp(cue.end)}`,
+        cue.text || "",
+        ""
+      )
+    }
+    return lines.join("\n")
+  }
+
+  const getBrowserWhisperTranscriber = async (
+    model: BrowserWhisperModel
+  ): Promise<any> => {
+    // Keep signature stable; worker now owns runtime/model lifecycle.
+    return { model }
+  }
+
+  const ensureWhisperWorkerReady = async () => {
+    if (!whisperWorkerRef.current) {
+      const workerUrl = chrome.runtime.getURL("assets/whisper-worker.mjs")
+      whisperWorkerRef.current = new Worker(workerUrl, { type: "module" })
+      whisperWorkerReadyRef.current = false
+    }
+
+    if (whisperWorkerReadyRef.current) return
+
+    const worker = whisperWorkerRef.current
+    if (!worker) throw new Error("Whisper worker failed to initialize")
+
+    const reqId = ++whisperWorkerReqIdRef.current
+    await new Promise<void>((resolve, reject) => {
+      const onWorkerError = (event: ErrorEvent) => {
+        window.clearTimeout(timeout)
+        worker.removeEventListener("message", onMessage)
+        worker.removeEventListener("error", onWorkerError)
+        worker.removeEventListener("messageerror", onWorkerMessageError)
+        reject(
+          new Error(
+            `Whisper worker crashed: ${event.message || "Unknown worker error"}`
+          )
+        )
+      }
+      const onWorkerMessageError = () => {
+        window.clearTimeout(timeout)
+        worker.removeEventListener("message", onMessage)
+        worker.removeEventListener("error", onWorkerError)
+        worker.removeEventListener("messageerror", onWorkerMessageError)
+        reject(new Error("Whisper worker message serialization error"))
+      }
+      const timeout = window.setTimeout(() => {
+        worker.removeEventListener("message", onMessage)
+        worker.removeEventListener("error", onWorkerError)
+        worker.removeEventListener("messageerror", onWorkerMessageError)
+        reject(new Error("Whisper worker init timed out"))
+      }, 30000)
+
+      const onMessage = (event: MessageEvent) => {
+        const data = event.data || {}
+        if (data.id !== reqId) return
+        if (data.type === "init:ok") {
+          window.clearTimeout(timeout)
+          worker.removeEventListener("message", onMessage)
+          worker.removeEventListener("error", onWorkerError)
+          worker.removeEventListener("messageerror", onWorkerMessageError)
+          whisperWorkerReadyRef.current = true
+          resolve()
+          return
+        }
+        if (data.type === "error") {
+          window.clearTimeout(timeout)
+          worker.removeEventListener("message", onMessage)
+          worker.removeEventListener("error", onWorkerError)
+          worker.removeEventListener("messageerror", onWorkerMessageError)
+          reject(new Error(data.error || "Whisper worker init failed"))
+        }
+      }
+
+      worker.addEventListener("message", onMessage)
+      worker.addEventListener("error", onWorkerError)
+      worker.addEventListener("messageerror", onWorkerMessageError)
+      worker.postMessage({
+        type: "init",
+        id: reqId,
+        payload: {
+          wasmBase: chrome.runtime.getURL("assets/onnxruntime/")
+        }
+      })
+    })
+  }
+
+  const transcribeWithWhisperWorker = async (
+    model: BrowserWhisperModel,
+    audio16k: Float32Array
+  ) => {
+    await ensureWhisperWorkerReady()
+    const worker = whisperWorkerRef.current
+    if (!worker) throw new Error("Whisper worker unavailable")
+
+    const reqId = ++whisperWorkerReqIdRef.current
+    const transferBuffer = audio16k.buffer.slice(0)
+
+    return await new Promise<any>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        worker.removeEventListener("message", onMessage)
+        reject(new Error("Whisper transcription timed out"))
+      }, 10 * 60 * 1000)
+
+      const onMessage = (event: MessageEvent) => {
+        const data = event.data || {}
+        if (data.id !== reqId) return
+        if (data.type === "transcribe:ok") {
+          window.clearTimeout(timeout)
+          worker.removeEventListener("message", onMessage)
+          resolve(data.payload)
+          return
+        }
+        if (data.type === "error") {
+          window.clearTimeout(timeout)
+          worker.removeEventListener("message", onMessage)
+          reject(new Error(data.error || "Whisper transcription failed"))
+        }
+      }
+
+      worker.addEventListener("message", onMessage)
+      worker.postMessage(
+        {
+          type: "transcribe",
+          id: reqId,
+          payload: {
+            model,
+            audioBuffer: transferBuffer,
+            options: {
+              language: "ja",
+              task: "transcribe",
+              return_timestamps: "word",
+              chunk_length_s: 30,
+              stride_length_s: 5,
+              no_speech_threshold: 0.35
+            }
+          }
+        },
+        [transferBuffer]
+      )
+    })
+  }
+
+  const runBrowserWhisperGeneration = async (videoId: string) => {
+    const captureSeconds = 180
+    await clearAsrCuesInContentScript(videoId)
+    setAsrStatus(`Capturing ${captureSeconds}s of tab audio...`)
+    const playbackState = await getCurrentPlaybackStateFromContentScript()
+
+    const audioBlob = await captureTabAudioBlob(captureSeconds * 1000)
+    setAsrStatus("Decoding captured audio...")
+    const audio16k = await decodeAudioBlobTo16kMono(audioBlob)
+    if (!audio16k.length) {
+      throw new Error("Captured audio is empty. Ensure the YouTube tab is playing audio.")
+    }
+
+    setAsrStatus(`Running Browser Whisper (${browserWhisperModel})...`)
+    await getBrowserWhisperTranscriber(browserWhisperModel)
+    const output = await transcribeWithWhisperWorker(
+      browserWhisperModel,
+      audio16k
+    )
+
+    const baseTime = Math.max(0, playbackState.currentTime)
+    const chunks = Array.isArray((output as any)?.chunks)
+      ? (output as any).chunks
+      : []
+    let cues: SubtitleCue[] = buildCuesFromWordChunks(
+      chunks as Array<{ text?: string; timestamp?: [number | null, number | null] }>,
+      baseTime,
+      captureSeconds
+    )
+
+    if (!cues.length) {
+      const fallbackText = normalizeCueTextToSingleLine(String((output as any)?.text || ""))
+      const phrases = splitJapaneseTextIntoPhrases(fallbackText)
+      const items = phrases.length ? phrases : fallbackText ? [fallbackText] : []
+      const perCue = items.length
+        ? Math.max(1.8, captureSeconds / items.length)
+        : captureSeconds
+      cues = items.map((item, idx) => {
+        const start = baseTime + idx * perCue
+        return {
+          start,
+          end: start + perCue,
+          text: item
+        }
+      })
+    }
+
+    if (!cues.length) {
+      throw new Error("Browser Whisper produced no subtitle cues.")
+    }
+
+    const jaVtt = cuesToVtt(cues)
+    await chrome.storage.local.set({
+      [asrSubtitleStorageKey(videoId)]: {
+        videoId,
+        model: browserWhisperModel,
+        jpOnly: true,
+        generatedAt: Date.now(),
+        jaVtt,
+        jaCues: cues
+      }
+    })
+
+    await saveAsrJobMeta(videoId, {
+      jobId: `browser-${Date.now()}`,
+      videoId,
+      model: browserWhisperModel,
+      status: "done",
+      updatedAt: Date.now(),
+      error: null
+    })
+
+    await sendAsrCuesToContentScript(cues, asrIncludeRomaji, videoId)
+    setAsrOutputReady(true)
+    setAsrStatus(
+      `Browser Whisper complete and loaded: ja=${cues.length}. Model files are cached by the browser.`
+    )
+  }
+
   const asrJobStorageKey = (videoId: string) => `asrJobMeta_${videoId}`
+  const asrSubtitleStorageKey = (videoId: string) => `asrSubtitle_${videoId}`
 
   const coerceAsrJobStatus = (status: string): AsrJobMeta["status"] => {
     if (status === "running" || status === "done" || status === "failed") {
@@ -651,13 +1308,32 @@ function MainPage({ onOpenTabs }) {
     videoId: string,
     model: string
   ): Promise<{ ready: boolean; jaCueCount: number }> => {
+    const localResult = await chrome.storage.local.get([
+      asrSubtitleStorageKey(videoId)
+    ])
+    const localCached = localResult[asrSubtitleStorageKey(videoId)]
+    const localJaCues = Array.isArray(localCached?.jaCues)
+      ? localCached.jaCues
+      : []
+    if (localJaCues.length > 0) {
+      return {
+        ready: true,
+        jaCueCount: localJaCues.length
+      }
+    }
+
+    const backend = await resolveAsrBackend()
+    if (backend.kind !== "jobs") {
+      return { ready: false, jaCueCount: 0 }
+    }
+
     const cachedQuery = new URLSearchParams({
       videoId,
       model,
       cachedOnly: "1"
     })
     const cachedResponse = await fetchWithTimeout(
-      `${LOCAL_ASR_BASE_URL}/subtitles?${cachedQuery.toString()}`,
+      `${backend.baseUrl}/subtitles?${cachedQuery.toString()}`,
       undefined,
       5000
     )
@@ -697,54 +1373,111 @@ function MainPage({ onOpenTabs }) {
     setAsrStatus("Checking local ASR service...")
 
     try {
-      const health = await fetchWithTimeout(`${LOCAL_ASR_BASE_URL}/health`)
-      if (!health.ok) {
-        throw new Error(
-          `Local ASR service is not reachable (${health.status}). Make sure ~/projects/server is running with /asr endpoints.`
-        )
+      if (asrBackendMode === "browser") {
+        await runBrowserWhisperGeneration(currentVideoId)
+        return
       }
+
+      const backend = await resolveAsrBackend(true)
 
       const cookieHeader = await getYouTubeCookieHeader()
       const query = new URLSearchParams({
         videoId: currentVideoId,
-        model: asrModel
+        model:
+          backend.kind === "legacy"
+            ? normalizeLegacyAsrModel(asrModel)
+            : asrModel
       })
 
-      setAsrStatus(`Generating subtitles with Qwen (${asrModel})...`)
+      setAsrStatus(
+        backend.kind === "legacy"
+          ? `Generating subtitles with local Whisper (${query.get("model")})...`
+          : `Generating subtitles with Qwen (${asrModel})...`
+      )
 
       const headers: Record<string, string> = {}
       if (cookieHeader) {
         headers["X-Youtube-Cookies"] = cookieHeader
       }
 
-      const response = await fetchWithTimeout(
-        `${LOCAL_ASR_BASE_URL}/jobs/start?${query}`,
-        { headers }
-      )
+      if (backend.kind === "jobs") {
+        const response = await fetchWithTimeout(
+          `${backend.baseUrl}/jobs/start?${query}`,
+          { headers }
+        )
 
+        if (!response.ok) {
+          const errorText = await response.text()
+          throw new Error(
+            errorText || `ASR job start failed (${response.status})`
+          )
+        }
+
+        const payload = await response.json()
+        if (!payload?.ok || !payload?.job?.jobId) {
+          throw new Error("ASR job did not return a valid jobId.")
+        }
+
+        const nextMeta: AsrJobMeta = {
+          jobId: String(payload.job.jobId),
+          videoId: currentVideoId,
+          model: String(payload.job.model || asrModel),
+          status: coerceAsrJobStatus(String(payload.job.status || "queued")),
+          updatedAt: Date.now(),
+          error: payload.job.error || null
+        }
+
+        await saveAsrJobMeta(currentVideoId, nextMeta)
+        setAsrOutputReady(false)
+        setAsrStatus(
+          `ASR job started (${nextMeta.status}). You can close this popup; status auto-refreshes when reopened.`
+        )
+        return
+      }
+
+      const response = await fetchWithTimeout(
+        `${backend.baseUrl}/subtitles?${query.toString()}`,
+        { headers },
+        10 * 60 * 1000
+      )
       if (!response.ok) {
         const errorText = await response.text()
-        throw new Error(errorText || `ASR job start failed (${response.status})`)
+        throw new Error(
+          errorText || `Local ASR generation failed (${response.status})`
+        )
       }
 
       const payload = await response.json()
-      if (!payload?.ok || !payload?.job?.jobId) {
-        throw new Error("ASR job did not return a valid jobId.")
+      const jaVtt = typeof payload.jaVtt === "string" ? payload.jaVtt : ""
+      const jaCues = normalizeCuesToSingleLine(parseVTT(jaVtt))
+      if (jaCues.length === 0) {
+        throw new Error("Local ASR generated empty subtitles.")
       }
+
+      const modelUsed = String(payload.model || query.get("model") || "base")
+      await chrome.storage.local.set({
+        [asrSubtitleStorageKey(currentVideoId)]: {
+          videoId: currentVideoId,
+          model: modelUsed,
+          jpOnly: true,
+          generatedAt: Date.now(),
+          jaVtt,
+          jaCues
+        }
+      })
 
       const nextMeta: AsrJobMeta = {
-        jobId: String(payload.job.jobId),
+        jobId: `legacy-${Date.now()}`,
         videoId: currentVideoId,
-        model: String(payload.job.model || asrModel),
-        status: coerceAsrJobStatus(String(payload.job.status || "queued")),
+        model: modelUsed,
+        status: "done",
         updatedAt: Date.now(),
-        error: payload.job.error || null
+        error: null
       }
-
       await saveAsrJobMeta(currentVideoId, nextMeta)
-      setAsrOutputReady(false)
+      setAsrOutputReady(true)
       setAsrStatus(
-        `ASR job started (${nextMeta.status}). You can close this popup; status auto-refreshes when reopened.`
+        `Local ASR generation complete: ja=${jaCues.length}. Click "Load Generated JP".`
       )
     } catch (error: any) {
       console.error("[MainPage] ASR generation error:", error)
@@ -777,8 +1510,12 @@ function MainPage({ onOpenTabs }) {
           videoId: currentVideoId,
           model: asrModel
         })
+        const backend = await resolveAsrBackend()
+        if (backend.kind !== "jobs") {
+          throw new Error("No ASR job found for this video. Start a job first.")
+        }
         const latestResponse = await fetchWithTimeout(
-          `${LOCAL_ASR_BASE_URL}/jobs/latest?${latestQuery.toString()}`
+          `${backend.baseUrl}/jobs/latest?${latestQuery.toString()}`
         )
         if (latestResponse.ok) {
           const latestPayload = await latestResponse.json()
@@ -801,9 +1538,33 @@ function MainPage({ onOpenTabs }) {
         throw new Error("No ASR job found for this video. Start a job first.")
       }
 
+      if (meta.jobId.startsWith("legacy-")) {
+        const cached = await getCachedAsrOutputSummary(currentVideoId, meta.model)
+        if (!cached.ready) {
+          throw new Error("No cached local ASR output found. Start a job first.")
+        }
+        await saveAsrJobMeta(currentVideoId, {
+          ...meta,
+          status: "done",
+          updatedAt: Date.now(),
+          error: null
+        })
+        setAsrOutputReady(true)
+        setAsrStatus(
+          `Local ASR output is available: ja=${cached.jaCueCount}. Click "Load Generated JP".`
+        )
+        return
+      }
+
+      const backend = await resolveAsrBackend()
+      if (backend.kind !== "jobs") {
+        throw new Error(
+          "ASR job backend changed. Start a new local job for this video."
+        )
+      }
       const statusQuery = new URLSearchParams({ jobId: meta.jobId })
       const response = await fetchWithTimeout(
-        `${LOCAL_ASR_BASE_URL}/jobs/status?${statusQuery.toString()}`
+        `${backend.baseUrl}/jobs/status?${statusQuery.toString()}`
       )
       if (!response.ok) {
         const errorText = await response.text()
@@ -892,33 +1653,56 @@ function MainPage({ onOpenTabs }) {
 
     try {
       const modelToLoad = asrJobMeta?.model || asrModel
-      const query = new URLSearchParams({
-        videoId: currentVideoId,
-        model: modelToLoad,
-        cachedOnly: "1"
-      })
+      let jaVtt = ""
+      let jaCues: SubtitleCue[] = []
 
-      const response = await fetchWithTimeout(
-        `${LOCAL_ASR_BASE_URL}/subtitles?${query.toString()}`
-      )
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(
-          errorText ||
-            "Generated subtitles are not ready yet. Check status and try again."
+      const localCachedResult = await chrome.storage.local.get([
+        asrSubtitleStorageKey(currentVideoId)
+      ])
+      const localCached = localCachedResult[asrSubtitleStorageKey(currentVideoId)]
+      if (typeof localCached?.jaVtt === "string") {
+        jaVtt = localCached.jaVtt
+        jaCues = normalizeCuesToSingleLine(
+          Array.isArray(localCached.jaCues)
+            ? localCached.jaCues
+            : parseVTT(localCached.jaVtt)
         )
       }
 
-      const payload = await response.json()
-      const jaVtt = typeof payload.jaVtt === "string" ? payload.jaVtt : ""
-      const jaCues = normalizeCuesToSingleLine(parseVTT(jaVtt))
+      if (jaCues.length === 0) {
+        const backend = await resolveAsrBackend()
+        if (backend.kind !== "jobs") {
+          throw new Error("Generated subtitles are not ready yet. Start Local ASR first.")
+        }
+
+        const query = new URLSearchParams({
+          videoId: currentVideoId,
+          model: modelToLoad,
+          cachedOnly: "1"
+        })
+
+        const response = await fetchWithTimeout(
+          `${backend.baseUrl}/subtitles?${query.toString()}`
+        )
+        if (!response.ok) {
+          const errorText = await response.text()
+          throw new Error(
+            errorText ||
+              "Generated subtitles are not ready yet. Check status and try again."
+          )
+        }
+
+        const payload = await response.json()
+        jaVtt = typeof payload.jaVtt === "string" ? payload.jaVtt : ""
+        jaCues = normalizeCuesToSingleLine(parseVTT(jaVtt))
+      }
+
       if (jaCues.length === 0) {
         throw new Error("Cached ASR output is empty.")
       }
 
-      const key = `asrSubtitle_${currentVideoId}`
       await chrome.storage.local.set({
-        [key]: {
+        [asrSubtitleStorageKey(currentVideoId)]: {
           videoId: currentVideoId,
           model: modelToLoad,
           jpOnly: true,
@@ -928,7 +1712,7 @@ function MainPage({ onOpenTabs }) {
         }
       })
 
-      await sendAsrCuesToContentScript(jaCues, asrIncludeRomaji)
+      await sendAsrCuesToContentScript(jaCues, asrIncludeRomaji, currentVideoId)
 
       setAsrOutputReady(true)
       if (
@@ -1008,6 +1792,7 @@ function MainPage({ onOpenTabs }) {
 
   useEffect(() => {
     if (subtitleMode !== "asr") return
+    if (asrBackendMode === "browser") return
     if (!currentVideoId) return
     if (!asrJobMeta || asrJobMeta.videoId !== currentVideoId) return
     if (!(asrJobMeta.status === "queued" || asrJobMeta.status === "running"))
@@ -1023,6 +1808,7 @@ function MainPage({ onOpenTabs }) {
     }
   }, [
     subtitleMode,
+    asrBackendMode,
     currentVideoId,
     asrJobMeta?.jobId,
     asrJobMeta?.videoId,
@@ -1261,7 +2047,6 @@ function MainPage({ onOpenTabs }) {
                   Fetch from Bundai API
                 </p>
 
-                {/*
                 <label className="flex items-center gap-2 cursor-pointer mt-1">
                   <input
                     type="radio"
@@ -1270,12 +2055,11 @@ function MainPage({ onOpenTabs }) {
                     onChange={() => handleSubtitleModeChange("asr")}
                     className="w-4 h-4"
                   />
-                  <span className="text-sm font-medium">Local ASR (Qwen)</span>
+                  <span className="text-sm font-medium">Local ASR</span>
                 </label>
                 <p className="text-xs text-gray-600 ml-6">
-                  Generate subtitles on your Mac (localhost)
+                  Generate subtitles on your machine (localhost)
                 </p>
-                */}
               </>
             )}
 
@@ -1509,29 +2293,76 @@ function MainPage({ onOpenTabs }) {
             </div>
           )}
         </div>
-      ) : /* Local ASR panel temporarily disabled */ false &&
-        enabled &&
+      ) : enabled &&
         isYouTubePage &&
         currentVideoId &&
         subtitleMode === "asr" ? (
         <div className="mt-4 bg-white bg-opacity-50 p-3 rounded border-2 border-black">
-          <h3 className="text-black font-bold mb-2">Generate Subtitles (Local ASR)</h3>
+          <h3 className="text-black font-bold mb-2">Generate Subtitles (ASR)</h3>
+          <div className="mb-3">
+            <label className="text-xs font-semibold block mb-1">Backend</label>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  name="asrBackend"
+                  checked={asrBackendMode === "local"}
+                  onChange={() => handleAsrBackendModeChange("local")}
+                />
+                Local Server
+              </label>
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  name="asrBackend"
+                  checked={asrBackendMode === "browser"}
+                  onChange={() => handleAsrBackendModeChange("browser")}
+                />
+                Browser Whisper
+              </label>
+            </div>
+          </div>
+
           <p className="text-xs text-gray-700 mb-3">
-            Uses local Qwen ASR via <code>127.0.0.1:3000/asr</code>. No third-party
-            API is used.
+            {asrBackendMode === "local"
+              ? "Uses a local ASR backend. Supported endpoints: 127.0.0.1:3000/asr (jobs server) or 127.0.0.1:8765 (pnpm asr:local)."
+              : "Runs Whisper directly in the browser. First run downloads the model and caches it for reuse."}
           </p>
           <p className="text-xs text-gray-700 mb-3">
-            ASR mode is JP-only and normalized to one-line subtitle text (Netflix-style).
+            ASR mode is JP-only and normalized to one-line subtitle text.
           </p>
 
           <div className="mb-3">
             <label className="text-xs font-semibold block mb-1">Model</label>
             <select
-              value={asrModel}
-              onChange={(e) => setAsrModel(e.target.value)}
+              value={asrBackendMode === "browser" ? browserWhisperModel : asrModel}
+              onChange={(e) => {
+                if (asrBackendMode === "browser") {
+                  handleBrowserWhisperModelChange(
+                    e.target.value as BrowserWhisperModel
+                  )
+                } else {
+                  setAsrModel(e.target.value)
+                }
+              }}
               className="w-full px-2 py-1 rounded border border-black text-sm bg-white">
-              <option value="Qwen/Qwen3-ASR-0.6B">Qwen3-ASR-0.6B (Fast)</option>
-              <option value="Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B (More accurate)</option>
+              {asrBackendMode === "browser" ? (
+                <>
+                  <option value="Xenova/whisper-tiny">
+                    Whisper tiny (~150MB, cached)
+                  </option>
+                  <option value="Xenova/whisper-base">
+                    Whisper base (~300-500MB, cached)
+                  </option>
+                </>
+              ) : (
+                <>
+                  <option value="base">Whisper base (Legacy local server)</option>
+                  <option value="small">Whisper small (Legacy local server)</option>
+                  <option value="Qwen/Qwen3-ASR-0.6B">Qwen3-ASR-0.6B (Fast)</option>
+                  <option value="Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B (More accurate)</option>
+                </>
+              )}
             </select>
           </div>
 
@@ -1584,7 +2415,9 @@ function MainPage({ onOpenTabs }) {
               ? "Starting..."
               : isAsrJobRunning
                 ? "Job Running..."
-                : "Start Background ASR Job"}
+                : asrBackendMode === "browser"
+                  ? "Capture + Run Browser Whisper"
+                  : "Start Background ASR Job"}
           </button>
 
           <button
@@ -1603,8 +2436,9 @@ function MainPage({ onOpenTabs }) {
           </button>
 
           <p className="text-xs text-gray-600 mt-2">
-            First run can take time because audio download + ASR happens on your
-            machine.
+            {asrBackendMode === "browser"
+              ? "First browser run can take time because model files download and cache locally."
+              : "First run can take time because audio download + ASR happens on your machine."}
           </p>
           <p className="text-xs text-gray-700 mt-1">
             Job state:{" "}
@@ -1623,11 +2457,14 @@ function MainPage({ onOpenTabs }) {
             </span>
           </p>
           <p className="text-xs text-green-800 mt-2">
-            After you start a job, it runs on the local server in the background.
-            You can close the popup and come back later.
+            {asrBackendMode === "browser"
+              ? "Browser Whisper captures the next ~90 seconds of tab audio and transcribes it locally."
+              : "After you start a job, it runs on the local server in the background. You can close the popup and come back later."}
           </p>
           <p className="text-xs text-gray-600 mt-1">
-            Flow: Start job -&gt; wait for auto status -&gt; Load generated subtitles.
+            {asrBackendMode === "browser"
+              ? "Flow: Capture + transcribe in browser -> Load generated subtitles."
+              : "Flow: Start job -> wait for auto status -> Load generated subtitles."}
           </p>
         </div>
       ) : enabled && subtitleMode === "user" ? (

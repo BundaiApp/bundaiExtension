@@ -36,6 +36,17 @@ CACHE_DIR = Path(
 YT_DLP_BIN = os.environ.get("BUNDAI_YTDLP_BIN", "yt-dlp")
 WHISPER_BIN = os.environ.get("BUNDAI_WHISPER_BIN", "whisper")
 DEFAULT_MODEL = os.environ.get("BUNDAI_ASR_MODEL", "base")
+YT_DLP_FORMAT = os.environ.get(
+    "BUNDAI_YTDLP_FORMAT",
+    "bestaudio[acodec!=none]/best[acodec!=none]/best",
+)
+YT_DLP_COOKIES_FROM_BROWSER = os.environ.get(
+    "BUNDAI_YTDLP_COOKIES_FROM_BROWSER", "chrome"
+).strip()
+YT_DLP_IMPERSONATE = os.environ.get("BUNDAI_YTDLP_IMPERSONATE", "chrome").strip()
+YT_DLP_EXTRACTOR_ARGS = os.environ.get(
+    "BUNDAI_YTDLP_EXTRACTOR_ARGS", "youtube:player_client=android,web"
+).strip()
 
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
@@ -77,43 +88,141 @@ def download_audio(video_id: str, output_dir: Path, cookie_header: str) -> Path:
     output_template = str(output_dir / f"{video_id}.%(ext)s")
     video_url = f"https://www.youtube.com/watch?v={video_id}"
 
-    command = [
-        YT_DLP_BIN,
+    base_flags = [
         "--no-playlist",
         "--quiet",
         "--no-warnings",
-        "-f",
-        "bestaudio",
-        "-x",
-        "--audio-format",
-        "mp3",
-        "--audio-quality",
-        "0",
-        "--output",
-        output_template,
-        "--print",
-        "after_move:filepath",
-        video_url,
     ]
-    if cookie_header:
-        command.extend(["--add-header", f"Cookie: {cookie_header}"])
+    if YT_DLP_IMPERSONATE:
+        base_flags.extend(["--impersonate", YT_DLP_IMPERSONATE])
+    if YT_DLP_EXTRACTOR_ARGS:
+        base_flags.extend(["--extractor-args", YT_DLP_EXTRACTOR_ARGS])
 
-    stdout, _stderr = run_command(command)
+    command_candidates: list[list[str]] = [
+        # Preferred path: audio-only with extraction
+        [
+            YT_DLP_BIN,
+            *base_flags,
+            "-f",
+            YT_DLP_FORMAT,
+            "-x",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "0",
+            "--output",
+            output_template,
+            "--print",
+            "after_move:filepath",
+            video_url,
+        ],
+        # Fallback: no extraction, let whisper read native container directly
+        [
+            YT_DLP_BIN,
+            *base_flags,
+            "-f",
+            YT_DLP_FORMAT,
+            "--output",
+            output_template,
+            "--print",
+            "after_move:filepath",
+            video_url,
+        ],
+        # Progressive/container fallback for streams where adaptive audio is problematic.
+        [
+            YT_DLP_BIN,
+            *base_flags,
+            "-f",
+            "18/22/best[ext=mp4]/best",
+            "--output",
+            output_template,
+            "--print",
+            "after_move:filepath",
+            video_url,
+        ],
+        # Force ffmpeg downloader as another fallback for flaky manifests.
+        [
+            YT_DLP_BIN,
+            *base_flags,
+            "--downloader",
+            "ffmpeg",
+            "-f",
+            YT_DLP_FORMAT,
+            "--output",
+            output_template,
+            "--print",
+            "after_move:filepath",
+            video_url,
+        ],
+        # Last-resort fallback for edge cases where bestaudio is unavailable
+        [
+            YT_DLP_BIN,
+            *base_flags,
+            "-f",
+            "best",
+            "--output",
+            output_template,
+            "--print",
+            "after_move:filepath",
+            video_url,
+        ],
+    ]
 
-    for line in reversed([line.strip() for line in stdout.splitlines() if line.strip()]):
-        candidate = Path(line)
-        if candidate.exists():
-            return candidate
+    failures: list[str] = []
+    for command in command_candidates:
+        command_variants: list[list[str]] = []
+
+        # Prefer browser cookie extraction over raw Cookie header.
+        if YT_DLP_COOKIES_FROM_BROWSER:
+            with_browser_cookies = command.copy()
+            with_browser_cookies.extend(
+                ["--cookies-from-browser", YT_DLP_COOKIES_FROM_BROWSER]
+            )
+            command_variants.append(with_browser_cookies)
+
+        if cookie_header:
+            with_cookie_header = command.copy()
+            with_cookie_header.extend(["--add-header", f"Cookie: {cookie_header}"])
+            command_variants.append(with_cookie_header)
+
+        # Finally try without cookies.
+        command_variants.append(command.copy())
+
+        for current_command in command_variants:
+            try:
+                stdout, _stderr = run_command(current_command)
+                for line in reversed(
+                    [line.strip() for line in stdout.splitlines() if line.strip()]
+                ):
+                    candidate = Path(line)
+                    if candidate.exists() and candidate.stat().st_size > 0:
+                        return candidate
+                    if candidate.exists() and candidate.stat().st_size == 0:
+                        try:
+                            candidate.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        failures.append(
+                            f"Downloaded empty file: {candidate} via {' '.join(current_command)}"
+                        )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(str(exc))
 
     audio_files = sorted(
         output_dir.glob(f"{video_id}.*"),
         key=lambda file_path: file_path.stat().st_mtime,
         reverse=True,
     )
-    if audio_files:
-        return audio_files[0]
+    non_empty_audio_files = [
+        file_path for file_path in audio_files if file_path.stat().st_size > 0
+    ]
+    if non_empty_audio_files:
+        return non_empty_audio_files[0]
 
-    raise RuntimeError("yt-dlp completed but no audio file was found.")
+    raise RuntimeError(
+        "yt-dlp could not download audio/video for this video ID.\n"
+        + "\n---\n".join(failures[-3:])
+    )
 
 
 def run_whisper(

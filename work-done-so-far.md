@@ -953,3 +953,348 @@ Important notes from README
 
 ---
 
+
+---
+
+## 2026-02-26 Browser ASR (Whisper) Integration & Fixes
+
+Time: 2026-02-26 00:32:58 +06
+
+Summary of actions (most recent session):
+- Re-enabled local ASR UI and backend selection in popup.
+- Added Browser Whisper mode (JP-only) that captures tab audio, runs on-device Whisper, caches results, and loads generated subtitles.
+- Added tab audio capture flow using `chrome.tabCapture` and audio resampling to 16k mono.
+- Added playback-state request handler in content script for accurate cue timing.
+- Added model selector (tiny/base) and backend selector (local server vs browser).
+- Added local ASR backend fallback (legacy `http://127.0.0.1:8765`) when local server not used.
+- Added `tabCapture` permission and updated host permissions for HF model fetches.
+- Fixed MV3 CSP issue by removing external `script-src` in `content_security_policy`.
+- Bumped version repeatedly for build traceability (latest: `2.3.13`).
+
+Dependency and build work:
+- Installed `@huggingface/transformers` (3.8.1).
+- Updated Browser Whisper import to browser build to avoid Node-only deps.
+- Rebuilt `build/prod` multiple times after each change.
+
+Current state and remaining issue:
+- The popup bundle now references a hashed module id for the transformers web build, but the module is not present in Parcel’s module table in the built popup bundle, so runtime still throws: “Browser Whisper runtime failed to load…”.
+- This indicates Plasmo/Parcel is still tree-shaking or not bundling the module for the extension popup. Next step is to force-bundle the browser build explicitly (e.g., via static import in a top-level module, or by creating a thin wrapper module and importing it).
+
+Files modified in this line of work:
+- `popup/index.tsx`: ASR UI, Browser Whisper backend, tab capture, audio decode/resample, runtime loader changes.
+- `contents/custom-subtitles-youtube.tsx`: added `getPlaybackState` handler.
+- `package.json`: version bumps, `tabCapture` permission, CSP tweaks, host permissions.
+- `pnpm-lock.yaml`: added `@huggingface/transformers`.
+- `background.ts`: other existing edits in worktree were left untouched.
+
+Build status:
+- `pnpm build` succeeds on `2.3.13` but Browser Whisper runtime still fails at runtime due to missing bundled module.
+
+
+---
+
+## 2026-02-26 ONNX Runtime (Local WASM) Packaging
+
+Time: 2026-02-26 01:05:00 +06
+
+Summary:
+- Added ONNX Runtime WASM binaries to the extension bundle to avoid jsdelivr runtime fetches.
+- Copied the following files into `assets/onnxruntime/` (~31–32MB total):
+  - `ort-wasm-simd-threaded.mjs`
+  - `ort-wasm-simd-threaded.wasm`
+  - `ort-wasm-simd-threaded.jsep.mjs`
+  - `ort-wasm-simd-threaded.jsep.wasm`
+- Updated `popup/index.tsx` to point `env.backends.onnx.wasm.wasmPaths` at `chrome.runtime.getURL("assets/onnxruntime/")`.
+- Added `assets/onnxruntime/*` to `manifest.web_accessible_resources` for packaging.
+- Bumped version to `2.3.17` and rebuilt successfully.
+
+Build verification:
+- `build/prod/assets/onnxruntime` contains the above files (~32MB).
+- `build/prod/manifest.json` shows `version: 2.3.17` and includes `assets/onnxruntime/*`.
+
+
+---
+
+## 2026-02-26 Browser Whisper Loader (Runtime Import)
+
+Time: 2026-02-26 01:45:00 +06
+
+Summary:
+- Copied Hugging Face browser runtime into extension assets: `assets/transformers/transformers.web.js`.
+- Switched Browser Whisper to runtime `import()` using `chrome.runtime.getURL(...)` to avoid Parcel bundling issues and allow dynamic module loading in the extension.
+- Added `assets/transformers/*` to `web_accessible_resources` for packaging consistency.
+- Bumped version to `2.3.19` and rebuilt.
+
+Changes:
+- `popup/index.tsx`: replaced package import with runtime dynamic import via URL.
+- `assets/transformers/transformers.web.js`: new asset (copied from `node_modules/@huggingface/transformers/dist/`).
+- `package.json`: version bump and new web-accessible resource.
+
+Build:
+- `pnpm build` completed successfully for 2.3.19.
+
+---
+
+## 2026-02-26 Browser Whisper CSP Fix (No unsafe-eval)
+
+Time: 2026-02-26 01:55:00 +06
+
+Summary:
+- Removed `new Function(...)` dynamic import because it triggers CSP `unsafe-eval` violations.
+- Switched to native `import(runtimeUrl)` for the transformers runtime file.
+- Bumped version to `2.3.20` and rebuilt.
+
+Changes:
+- `popup/index.tsx`: use `await import(runtimeUrl)` directly.
+- `package.json`: version bump.
+
+Build:
+- `pnpm build` completed successfully for 2.3.20.
+
+---
+
+## 2026-02-26 Browser Whisper Loader (Bundled Wrapper)
+
+Time: 2026-02-26 02:05:00 +06
+
+Summary:
+- Replaced runtime URL import with a bundled wrapper module to avoid Parcel dynamic import limitations and missing-module errors.
+- Added `popup/transformersRuntime.ts` exporting the browser runtime.
+- Switched Browser Whisper to `import("./transformersRuntime")`.
+- Bumped version to `2.3.21` and rebuilt.
+
+Changes:
+- `popup/transformersRuntime.ts`: new wrapper module.
+- `popup/index.tsx`: import wrapper module instead of runtime URL.
+- `package.json`: version bump.
+
+Build:
+- `pnpm build` completed successfully for 2.3.21.
+
+---
+
+## 2026-02-26 Browser Whisper WASM Paths Fix
+
+Time: 2026-02-26 02:15:00 +06
+
+Summary:
+- Forced ONNX wasm paths to the extension-local bundle (`assets/onnxruntime/`) for all transformer env hooks.
+- Also synchronized `env.backends.onnx.wasm` to avoid default jsdelivr fallbacks.
+- Bumped version to `2.3.22` and rebuilt.
+
+Changes:
+- `popup/index.tsx`: set `env.wasm.wasmPaths` and `env.backends.onnx.wasm.wasmPaths` to the extension asset path.
+- `package.json`: version bump.
+
+Build:
+- `pnpm build` completed successfully for 2.3.22.
+
+---
+
+## 2026-02-26 Web-Accessible Resources (All URLs)
+
+Time: 2026-02-26 02:25:00 +06
+
+Summary:
+- Added a `web_accessible_resources` entry for `<all_urls>` to ensure ONNX runtime and transformers assets can be loaded from any context (popup, workers, or content scripts).
+- Bumped version to `2.3.23` and rebuilt.
+
+Changes:
+- `package.json`: added `<all_urls>` W.A.R. entry for `assets/onnxruntime/*` and `assets/transformers/*`; version bump.
+
+Build:
+- `pnpm build` completed successfully for 2.3.23.
+
+---
+
+## 2026-02-26 Transformers Runtime (Parcel Ignore)
+
+Time: 2026-02-26 02:35:00 +06
+
+Summary:
+- Switched back to loading the transformers runtime from extension assets via runtime URL, but with `/* @parcel-ignore */` so Parcel doesn’t try to bundle or resolve it.
+- This avoids Parcel’s module loader intercepting and breaking dynamic module loads (including ORT wasm loader URLs).
+- Removed the wrapper module.
+- Bumped version to `2.3.24` and rebuilt.
+
+Changes:
+- `popup/index.tsx`: `import(/* @parcel-ignore */ runtimeUrl)`.
+- `popup/transformersRuntime.ts`: removed.
+- `package.json`: version bump.
+
+Build:
+- `pnpm build` completed successfully for 2.3.24.
+
+---
+
+## 2026-02-26 Static Bundled Transformers Import
+
+Time: 2026-02-26 03:00:00 +06
+
+Summary:
+- Removed runtime dynamic `import()` path loading for transformers runtime (was causing repeated `Cannot find module` failures via Parcel/module resolution).
+- Switched to static import of `@huggingface/transformers/dist/transformers.web.js` directly inside popup code.
+- Kept ONNX wasm path pinned to extension-local `assets/onnxruntime/`.
+- Bumped version to `2.3.25` and rebuilt.
+
+Changes:
+- `popup/index.tsx`: static import of `transformersEnv` and `transformersPipeline`; removed runtime module URL loading.
+- `package.json`: version bump.
+
+Build:
+- `pnpm build` completed successfully for 2.3.25.
+
+---
+
+## 2026-02-26 Worker-based Browser Whisper Runtime
+
+Time: 2026-02-26 03:10:00 +06
+
+Summary:
+- Replaced in-popup transformers/onnx runtime loading with a dedicated module worker (`assets/whisper-worker.mjs`) to bypass Parcel runtime module resolution issues.
+- Worker imports `assets/transformers/transformers.web.js` directly and sets ONNX wasm paths to extension-local `assets/onnxruntime/`.
+- Popup now sends audio to worker and receives transcription output via postMessage.
+- Bumped version to `2.3.26` and rebuilt.
+
+Changes:
+- `assets/whisper-worker.mjs`: new runtime/transcription worker.
+- `popup/index.tsx`: worker init + transcribe flow; removed direct transformers runtime dynamic loading.
+- `package.json`: version bump and `assets/whisper-worker.mjs` web-accessible resource entries.
+
+Build:
+- `pnpm build` completed successfully for 2.3.26.
+
+---
+
+## 2026-02-26 Worker Init Diagnostics + Lazy Runtime Import
+
+Time: 2026-02-26 03:25:00 +06
+
+Summary:
+- Changed worker to lazy-load transformers runtime during `init` (`await import(runtimeUrl)`) so import failures are returned via worker error messages instead of silent timeout.
+- Added popup worker listeners for `error` and `messageerror` to surface crash causes immediately.
+- Bumped version to `2.3.27` and rebuilt.
+
+Changes:
+- `assets/whisper-worker.mjs`: moved runtime import from top-level to init path; added guarded runtime/env setup.
+- `popup/index.tsx`: added worker `error`/`messageerror` handling in init flow.
+- `package.json`: version bump.
+
+Build:
+- `pnpm build` completed successfully for 2.3.27.
+
+---
+
+## 2026-02-26 Bundled TS Worker (Fix bare module specifiers)
+
+Time: 2026-02-26 03:40:00 +06
+
+Summary:
+- Replaced raw asset worker (`assets/whisper-worker.mjs`) with a bundled TypeScript worker entry (`workers/whisper-worker.ts`).
+- Popup now constructs worker with `new URL("../workers/whisper-worker.ts", import.meta.url)`, letting Parcel resolve/import dependencies correctly.
+- This fixes browser errors like `Failed to resolve module specifier \"onnxruntime-common\"` caused by loading raw transformers runtime directly in browser context.
+- Removed old raw worker file and cleaned web-accessible resource entries.
+- Bumped version to `2.3.28` and rebuilt.
+
+Changes:
+- Added `workers/whisper-worker.ts`.
+- Updated `popup/index.tsx` worker URL construction.
+- Deleted `assets/whisper-worker.mjs`.
+- Updated `package.json` version/resources.
+
+Build:
+- `pnpm build` completed successfully for 2.3.28.
+- Output now includes compiled worker artifact (e.g. `build/prod/whisper-worker.8f67ba2c.js`).
+
+---
+
+## 2026-02-26 Browser Whisper runtime fix (AVA-style static runtime)
+
+### Problem addressed
+- Browser ASR repeatedly failed with runtime loader errors in extension context, especially:
+  - `no available backend found. ERR: [wasm] Error: Cannot find module 'chrome-extension://.../assets/onnxruntime/ort-wasm-simd-threaded.jsep.mjs'`
+
+### What was changed
+- Stopped relying on Parcel-managed worker module for Whisper runtime.
+- Added static runtime preparation script:
+  - `scripts/prepare-browser-whisper-runtime.mjs`
+- Added static extension worker loaded from extension assets:
+  - `assets/whisper-worker.mjs`
+- Rewired popup worker creation to use extension URL directly:
+  - `popup/index.tsx`
+  - `new Worker(chrome.runtime.getURL("assets/whisper-worker.mjs"), { type: "module" })`
+- Added runtime shims and patched transformers runtime imports to local extension assets:
+  - `assets/transformers/transformers.web.js` (patched imports)
+  - `assets/transformers/onnxruntime-common-shim.mjs`
+  - `assets/transformers/onnxruntime-web-shim.mjs`
+  - `assets/onnxruntime/ort.wasm.min.mjs`
+  - `assets/onnxruntime/ort-wasm-simd-threaded.mjs`
+  - `assets/onnxruntime/ort-wasm-simd-threaded.jsep.mjs`
+  - `assets/onnxruntime/ort-wasm-simd-threaded.wasm`
+  - `assets/onnxruntime/ort-wasm-simd-threaded.jsep.wasm`
+- Ensured runtime prep is executed before every build/dev:
+  - `package.json` scripts updated (`dev`, `build`)
+- Ensured worker asset is packaged and accessible:
+  - `package.json` manifest `web_accessible_resources` includes `assets/whisper-worker.mjs`
+- Removed obsolete Parcel worker source:
+  - deleted `workers/whisper-worker.ts`
+- Version bump:
+  - `2.3.29`
+
+### Build verification
+- `pnpm build` succeeds.
+- Confirmed build output includes:
+  - `build/prod/assets/whisper-worker.mjs`
+  - `build/prod/assets/transformers/*`
+  - `build/prod/assets/onnxruntime/*`
+
+### Notes
+- This approach mirrors AVA’s static runtime strategy (ship runtime files as static assets), adapted for extension CSP and URL loading.
+- Model inference still runs locally in the user browser (no hosted inference server).
+
+### 2026-02-26 follow-up (2.3.30): fixed ASR subtitle message path
+- Issue addressed: popup sends `loadAsrSubtitle` but content script did not handle this action.
+- Fix:
+  - Added `loadAsrSubtitle` handler in `contents/custom-subtitles-youtube.tsx` runtime message listener.
+  - Handler now writes ASR cues into subtitle track 1 (`subtitle1Data`) and resets processed text state.
+  - Sends `sendResponse({ success: true, loaded: cues.length })` to avoid hanging message channels.
+- Version bump: `2.3.30`.
+- Build: `pnpm build` successful.
+
+### 2026-02-26 follow-up (2.3.31): faster browser ASR + stale subtitle isolation
+- Reduced browser capture window from 90s to 45s in `popup/index.tsx` to improve turnaround for subsequent videos.
+- Added popup -> content action `clearAsrSubtitle` before each browser ASR run to clear prior cues on the page.
+- Made ASR messaging video-aware:
+  - `loadAsrSubtitle` now carries `videoId`.
+  - content script validates incoming `videoId` against current YouTube URL and ignores mismatches.
+- Added content action handler `clearAsrSubtitle` with same videoId guard.
+- Updated `sendAsrCuesToContentScript` signature to include `videoId` and updated call sites.
+- Version bump: `2.3.31`.
+- Build: `pnpm build` successful.
+
+### 2026-02-26 follow-up (2.3.32): improve Browser Whisper cue density + JP decoding
+- Increased browser capture window to 180s for longer clips.
+- Switched Whisper decode settings for Japanese:
+  - `language: "ja"`
+  - `return_timestamps: "word"`
+  - `chunk_length_s: 30`
+  - `stride_length_s: 5`
+  - `no_speech_threshold: 0.35`
+- Added post-processing to convert word-level chunks into denser subtitle cues:
+  - New helper `buildCuesFromWordChunks(...)` groups words by punctuation, duration, and timing gaps.
+  - Added `splitJapaneseTextIntoPhrases(...)` fallback to avoid single giant line when chunk metadata is sparse.
+- Version bump: `2.3.32`.
+- Build: `pnpm build` successful.
+
+### 2026-02-26 local ASR downloader hardening
+- Verified local prerequisites are present on machine:
+  - `yt-dlp` installed
+  - `whisper` installed
+  - `ffmpeg` installed
+- Root cause for failure is downloader path (empty file / format availability), not missing Whisper model binaries.
+- Updated `scripts/local_asr_server.py` downloader behavior:
+  - Added `BUNDAI_YTDLP_COOKIES_FROM_BROWSER` env (default `chrome`).
+  - Downloader now prefers `--cookies-from-browser` over raw Cookie header.
+  - Falls back to raw header and then no-cookie attempt.
+  - Rejects zero-byte downloads explicitly and continues retries.
+  - Final fallback scan now returns only non-empty files.

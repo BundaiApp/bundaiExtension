@@ -1,17 +1,18 @@
 {
   "name": "bundai: Learn Japanese With Anime",
   "displayName": "Bundai-Japanese Anime Dual Subtitle Loader",
-  "version": "2.2.0",
+  "version": "2.3.33",
   "description": "A Japanese language learning, chromium based web extension",
   "author": "bundai",
   "scripts": {
-    "dev": "plasmo dev",
-    "build": "rm -rf build && plasmo build && mv build/chrome-mv3-prod build/prod && rm -rf build/chrome-mv3-dev 2>/dev/null; true",
+    "dev": "node scripts/prepare-browser-whisper-runtime.mjs && plasmo dev",
+    "build": "node scripts/prepare-browser-whisper-runtime.mjs && rm -rf build && plasmo build && mv build/chrome-mv3-prod build/prod && rm -rf build/chrome-mv3-dev 2>/dev/null; true",
     "package": "plasmo package",
     "asr:local": "python3 scripts/local_asr_server.py"
   },
   "dependencies": {
     "@apollo/client": "^3.13.8",
+    "@huggingface/transformers": "^3.8.1",
     "@plasmohq/storage": "^1.15.0",
     "graphql": "^16.11.0",
     "kuromoji": "^0.1.2",
@@ -40,15 +41,20 @@
       "activeTab",
       "storage",
       "tabs",
-      "cookies"
+      "cookies",
+      "tabCapture"
     ],
     "host_permissions": [
+      "*://youtube.com/*",
       "*://www.youtube.com/*",
+      "*://huggingface.co/*",
+      "*://*.huggingface.co/*",
+      "https://api.bundai.app/*",
       "http://127.0.0.1/*",
       "http://localhost/*"
     ],
     "content_security_policy": {
-      "extension_pages": "script-src 'self'; object-src 'self'"
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
     },
     "web_accessible_resources": [
       {
@@ -56,10 +62,23 @@
           "tabs/*",
           "node_modules/kuromoji/dict/*.dat.gz",
           "assets/data/japanese/words.idx",
-          "assets/data/japanese/words.ljson"
+          "assets/data/japanese/words.ljson",
+          "assets/whisper-worker.mjs",
+          "assets/onnxruntime/*",
+          "assets/transformers/*"
         ],
         "matches": [
           "*://*.youtube.com/*"
+        ]
+      },
+      {
+        "resources": [
+          "assets/whisper-worker.mjs",
+          "assets/onnxruntime/*",
+          "assets/transformers/*"
+        ],
+        "matches": [
+          "<all_urls>"
         ]
       }
     ]
