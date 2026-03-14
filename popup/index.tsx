@@ -13,11 +13,10 @@ import client from "~graphql"
 import { parseVTT, type SubtitleCue } from "~utils/subtitleParser"
 
 const BUNDAI_API_BASE_URL = "https://api.bundai.app"
-const LOCAL_ASR_BASE_URL = "http://127.0.0.1:3000/asr"
 const LEGACY_LOCAL_ASR_BASE_URL = "http://127.0.0.1:8765"
 type SubtitleMode = "api" | "user" | "asr"
 type AsrJobState = "idle" | "queued" | "running" | "done" | "failed"
-type AsrBackendKind = "jobs" | "legacy"
+type AsrBackendKind = "legacy"
 type AsrBackendMode = "local" | "browser"
 type BrowserWhisperModel = "Xenova/whisper-tiny" | "Xenova/whisper-base"
 type AsrBackend = {
@@ -81,7 +80,7 @@ function MainPage({ onOpenTabs }) {
   // Subtitle mode: 'api' | 'user' | 'asr'
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("user")
   const [showRefreshMessage, setShowRefreshMessage] = useState(false)
-  const [asrModel, setAsrModel] = useState("Qwen/Qwen3-ASR-0.6B")
+  const [asrModel, setAsrModel] = useState("base")
   const [asrBackendMode, setAsrBackendMode] =
     useState<AsrBackendMode>("local")
   const [browserWhisperModel, setBrowserWhisperModel] =
@@ -839,7 +838,6 @@ function MainPage({ onOpenTabs }) {
     }
 
     const candidates: AsrBackend[] = [
-      { baseUrl: LOCAL_ASR_BASE_URL, kind: "jobs" },
       { baseUrl: LEGACY_LOCAL_ASR_BASE_URL, kind: "legacy" }
     ]
 
@@ -860,7 +858,7 @@ function MainPage({ onOpenTabs }) {
     }
 
     throw new Error(
-      "Local ASR service is not reachable. Start either 127.0.0.1:3000/asr (jobs server) or run `pnpm asr:local` for 127.0.0.1:8765."
+      "Local ASR service is not reachable. Run `pnpm asr:local` for 127.0.0.1:8765."
     )
   }
 
@@ -876,6 +874,10 @@ function MainPage({ onOpenTabs }) {
       "turbo"
     ])
     return whisperModels.has(model) ? model : "base"
+  }
+
+  const isLegacyWhisperModel = (model: string): boolean => {
+    return normalizeLegacyAsrModel(model) === model
   }
 
   const getCurrentPlaybackStateFromContentScript = async (): Promise<{
@@ -1292,6 +1294,9 @@ function MainPage({ onOpenTabs }) {
       typeof stored.model === "string" &&
       typeof stored.status === "string"
     ) {
+      if (!isLegacyWhisperModel(stored.model)) {
+        return null
+      }
       return {
         jobId: stored.jobId,
         videoId: stored.videoId,
@@ -1383,56 +1388,16 @@ function MainPage({ onOpenTabs }) {
       const cookieHeader = await getYouTubeCookieHeader()
       const query = new URLSearchParams({
         videoId: currentVideoId,
-        model:
-          backend.kind === "legacy"
-            ? normalizeLegacyAsrModel(asrModel)
-            : asrModel
+        model: normalizeLegacyAsrModel(asrModel)
       })
 
       setAsrStatus(
-        backend.kind === "legacy"
-          ? `Generating subtitles with local Whisper (${query.get("model")})...`
-          : `Generating subtitles with Qwen (${asrModel})...`
+        `Generating subtitles with local Whisper (${query.get("model")})...`
       )
 
       const headers: Record<string, string> = {}
       if (cookieHeader) {
         headers["X-Youtube-Cookies"] = cookieHeader
-      }
-
-      if (backend.kind === "jobs") {
-        const response = await fetchWithTimeout(
-          `${backend.baseUrl}/jobs/start?${query}`,
-          { headers }
-        )
-
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(
-            errorText || `ASR job start failed (${response.status})`
-          )
-        }
-
-        const payload = await response.json()
-        if (!payload?.ok || !payload?.job?.jobId) {
-          throw new Error("ASR job did not return a valid jobId.")
-        }
-
-        const nextMeta: AsrJobMeta = {
-          jobId: String(payload.job.jobId),
-          videoId: currentVideoId,
-          model: String(payload.job.model || asrModel),
-          status: coerceAsrJobStatus(String(payload.job.status || "queued")),
-          updatedAt: Date.now(),
-          error: payload.job.error || null
-        }
-
-        await saveAsrJobMeta(currentVideoId, nextMeta)
-        setAsrOutputReady(false)
-        setAsrStatus(
-          `ASR job started (${nextMeta.status}). You can close this popup; status auto-refreshes when reopened.`
-        )
-        return
       }
 
       const response = await fetchWithTimeout(
@@ -1556,82 +1521,7 @@ function MainPage({ onOpenTabs }) {
         return
       }
 
-      const backend = await resolveAsrBackend()
-      if (backend.kind !== "jobs") {
-        throw new Error(
-          "ASR job backend changed. Start a new local job for this video."
-        )
-      }
-      const statusQuery = new URLSearchParams({ jobId: meta.jobId })
-      const response = await fetchWithTimeout(
-        `${backend.baseUrl}/jobs/status?${statusQuery.toString()}`
-      )
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(errorText || `ASR status check failed (${response.status})`)
-      }
-
-      const payload = await response.json()
-      const job = payload?.job
-      if (!job?.jobId) {
-        throw new Error("Invalid ASR status response.")
-      }
-
-      let nextMeta: AsrJobMeta = {
-        jobId: String(job.jobId),
-        videoId: currentVideoId,
-        model: String(job.model || meta.model),
-        status: coerceAsrJobStatus(String(job.status || "queued")),
-        updatedAt: Date.now(),
-        error: job.error || null
-      }
-
-      if (nextMeta.status === "queued" || nextMeta.status === "running") {
-        try {
-          const cached = await getCachedAsrOutputSummary(
-            currentVideoId,
-            nextMeta.model
-          )
-          if (cached.ready) {
-            nextMeta = {
-              ...nextMeta,
-              status: "done",
-              updatedAt: Date.now(),
-              error: null
-            }
-            await saveAsrJobMeta(currentVideoId, nextMeta)
-            setAsrOutputReady(true)
-            setAsrStatus(
-              `ASR output is available: ja=${cached.jaCueCount}. Click "Load Generated JP".`
-            )
-            return
-          }
-        } catch (cachedCheckError) {
-          console.warn(
-            "[MainPage] cached ASR availability check failed:",
-            cachedCheckError
-          )
-        }
-      }
-
-      await saveAsrJobMeta(currentVideoId, nextMeta)
-
-      if (nextMeta.status === "done") {
-        const jaCount = Number(job?.resultSummary?.jaCueCount || 0)
-        setAsrOutputReady(true)
-        setAsrStatus(
-          `ASR done${jaCount ? `: ja=${jaCount}` : ""}. Click "Load Generated JP".`
-        )
-      } else if (nextMeta.status === "failed") {
-        setAsrOutputReady(false)
-        setAsrError(nextMeta.error || "ASR job failed.")
-        setAsrStatus("")
-      } else {
-        setAsrOutputReady(false)
-        setAsrStatus(
-          `ASR job is ${nextMeta.status}. Status auto-refreshes while this popup is open.`
-        )
-      }
+      throw new Error("No cached local ASR output found. Start Local ASR first.")
     } catch (error: any) {
       console.error("[MainPage] ASR status error:", error)
       setAsrError(error?.message || "Failed to check ASR job status.")
@@ -1671,14 +1561,11 @@ function MainPage({ onOpenTabs }) {
 
       if (jaCues.length === 0) {
         const backend = await resolveAsrBackend()
-        if (backend.kind !== "jobs") {
-          throw new Error("Generated subtitles are not ready yet. Start Local ASR first.")
-        }
 
         const query = new URLSearchParams({
           videoId: currentVideoId,
           model: modelToLoad,
-          cachedOnly: "1"
+          force: "0"
         })
 
         const response = await fetchWithTimeout(
@@ -2325,7 +2212,7 @@ function MainPage({ onOpenTabs }) {
 
           <p className="text-xs text-gray-700 mb-3">
             {asrBackendMode === "local"
-              ? "Uses a local ASR backend. Supported endpoints: 127.0.0.1:3000/asr (jobs server) or 127.0.0.1:8765 (pnpm asr:local)."
+              ? "Uses the local Whisper server at 127.0.0.1:8765. Start it with `pnpm asr:local`."
               : "Runs Whisper directly in the browser. First run downloads the model and caches it for reuse."}
           </p>
           <p className="text-xs text-gray-700 mb-3">
@@ -2357,10 +2244,8 @@ function MainPage({ onOpenTabs }) {
                 </>
               ) : (
                 <>
-                  <option value="base">Whisper base (Legacy local server)</option>
-                  <option value="small">Whisper small (Legacy local server)</option>
-                  <option value="Qwen/Qwen3-ASR-0.6B">Qwen3-ASR-0.6B (Fast)</option>
-                  <option value="Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B (More accurate)</option>
+                  <option value="base">Whisper base (Local server)</option>
+                  <option value="small">Whisper small (Local server)</option>
                 </>
               )}
             </select>

@@ -967,6 +967,7 @@ Summary of actions (most recent session):
 - Added playback-state request handler in content script for accurate cue timing.
 - Added model selector (tiny/base) and backend selector (local server vs browser).
 - Added local ASR backend fallback (legacy `http://127.0.0.1:8765`) when local server not used.
+- Removed dead Qwen/local-jobs ASR references from the popup flow. Local ASR now points only at the Whisper server on `http://127.0.0.1:8765`, defaults to Whisper `base`, ignores stale Qwen job metadata, and bumps the extension version to `2.3.34`.
 - Added `tabCapture` permission and updated host permissions for HF model fetches.
 - Fixed MV3 CSP issue by removing external `script-src` in `content_security_policy`.
 - Bumped version repeatedly for build traceability (latest: `2.3.13`).
