@@ -1,7 +1,7 @@
 {
   "name": "bundai: Learn Japanese With Anime",
   "displayName": "Bundai-Japanese Anime Dual Subtitle Loader",
-  "version": "2.3.34",
+  "version": "2.3.35",
   "description": "A Japanese language learning, chromium based web extension",
   "author": "bundai",
   "scripts": {

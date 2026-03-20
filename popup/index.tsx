@@ -80,7 +80,7 @@ function MainPage({ onOpenTabs }) {
   // Subtitle mode: 'api' | 'user' | 'asr'
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("user")
   const [showRefreshMessage, setShowRefreshMessage] = useState(false)
-  const [asrModel, setAsrModel] = useState("base")
+  const [asrModel, setAsrModel] = useState("tiny")
   const [asrBackendMode, setAsrBackendMode] =
     useState<AsrBackendMode>("local")
   const [browserWhisperModel, setBrowserWhisperModel] =
@@ -858,7 +858,7 @@ function MainPage({ onOpenTabs }) {
     }
 
     throw new Error(
-      "Local ASR service is not reachable. Run `pnpm asr:local` for 127.0.0.1:8765."
+      "Local ASR service is not reachable. Open the Bundai desktop app so it can serve ASR on 127.0.0.1:8765."
     )
   }
 
@@ -2212,7 +2212,7 @@ function MainPage({ onOpenTabs }) {
 
           <p className="text-xs text-gray-700 mb-3">
             {asrBackendMode === "local"
-              ? "Uses the local Whisper server at 127.0.0.1:8765. Start it with `pnpm asr:local`."
+              ? "Uses the Bundai desktop ASR service at 127.0.0.1:8765. Open the Bundai desktop app first."
               : "Runs Whisper directly in the browser. First run downloads the model and caches it for reuse."}
           </p>
           <p className="text-xs text-gray-700 mb-3">
@@ -2244,8 +2244,9 @@ function MainPage({ onOpenTabs }) {
                 </>
               ) : (
                 <>
-                  <option value="base">Whisper base (Local server)</option>
-                  <option value="small">Whisper small (Local server)</option>
+                  <option value="tiny">Whisper tiny (Desktop app)</option>
+                  <option value="base">Whisper base (Desktop app fallback)</option>
+                  <option value="small">Whisper small (Desktop app fallback)</option>
                 </>
               )}
             </select>
