@@ -84,6 +84,9 @@ function Register({
       <div className="flex flex-col gap-1 border-black border-b-2 pb-1">
         <h1 className="text-3xl font-extrabold text-black">Bundai Signup</h1>
       </div>
+      <p className="text-sm font-medium text-black opacity-80">
+        Bundai is free for now while we focus on retention and core learning UX.
+      </p>
       <input
         id="username"
         type="text"

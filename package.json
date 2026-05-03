@@ -1,18 +1,17 @@
 {
   "name": "bundai: Learn Japanese With Anime",
   "displayName": "Bundai-Japanese Anime Dual Subtitle Loader",
-  "version": "2.3.35",
+  "version": "2.5.13",
   "description": "A Japanese language learning, chromium based web extension",
   "author": "bundai",
   "scripts": {
-    "dev": "node scripts/prepare-browser-whisper-runtime.mjs && plasmo dev",
-    "build": "node scripts/prepare-browser-whisper-runtime.mjs && rm -rf build && plasmo build && mv build/chrome-mv3-prod build/prod && rm -rf build/chrome-mv3-dev 2>/dev/null; true",
+    "dev": "plasmo dev",
+    "build": "rm -rf build && plasmo build && mv build/chrome-mv3-prod build/prod && rm -rf build/chrome-mv3-dev 2>/dev/null; true",
     "package": "plasmo package",
-    "asr:local": "python3 scripts/local_asr_server.py"
+    "asr:local": "echo 'Run the ASR server from ~/projects/bundai-asr instead' && exit 1"
   },
   "dependencies": {
     "@apollo/client": "^3.13.8",
-    "@huggingface/transformers": "^3.8.1",
     "@plasmohq/storage": "^1.15.0",
     "graphql": "^16.11.0",
     "kuromoji": "^0.1.2",
@@ -41,8 +40,7 @@
       "activeTab",
       "storage",
       "tabs",
-      "cookies",
-      "tabCapture"
+      "cookies"
     ],
     "host_permissions": [
       "*://youtube.com/*",
@@ -62,23 +60,10 @@
           "tabs/*",
           "node_modules/kuromoji/dict/*.dat.gz",
           "assets/data/japanese/words.idx",
-          "assets/data/japanese/words.ljson",
-          "assets/whisper-worker.mjs",
-          "assets/onnxruntime/*",
-          "assets/transformers/*"
+          "assets/data/japanese/words.ljson"
         ],
         "matches": [
           "*://*.youtube.com/*"
-        ]
-      },
-      {
-        "resources": [
-          "assets/whisper-worker.mjs",
-          "assets/onnxruntime/*",
-          "assets/transformers/*"
-        ],
-        "matches": [
-          "<all_urls>"
         ]
       }
     ]

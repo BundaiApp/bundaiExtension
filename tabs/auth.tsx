@@ -103,6 +103,9 @@ function AuthPage() {
             <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
               <h1 className="text-3xl font-extrabold text-black mb-2">Bundai Account</h1>
               <p className="text-black opacity-80">Manage your Japanese learning extension</p>
+              <p className="text-sm font-medium text-black opacity-70 mt-3">
+                Bundai is free for now while we focus on retention and core learning UX.
+              </p>
             </div>
 
             {/* User Profile Card */}
