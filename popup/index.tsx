@@ -13,7 +13,7 @@ import client from "~graphql"
 import { parseVTT, type SubtitleCue } from "~utils/subtitleParser"
 
 const BUNDAI_API_BASE_URL = "https://api.bundai.app"
-const LEGACY_LOCAL_ASR_BASE_URL = "http://127.0.0.1:8765"
+const LEGACY_LOCAL_ASR_BASE_URL = "https://api.bundai.app/asr"
 type SubtitleMode = "api" | "user" | "asr"
 type AsrJobState = "idle" | "queued" | "running" | "done" | "failed"
 type AsrBackendKind = "legacy"
@@ -816,7 +816,7 @@ function MainPage({ onOpenTabs }) {
     }
 
     throw new Error(
-      "Local ASR server is not reachable. Make sure the ASR server is running on 127.0.0.1:8765 (pnpm run asr:local)."
+      "ASR server is not reachable. Make sure the API server at api.bundai.app is online."
     )
   }
 
@@ -1788,7 +1788,7 @@ function MainPage({ onOpenTabs }) {
         <div className="mt-4 bg-white bg-opacity-50 p-3 rounded border-2 border-black">
           <h3 className="text-black font-bold mb-2">Generate Subtitles (ASR)</h3>
           <p className="text-xs text-gray-700 mb-3">
-            Uses the Bundai ASR server at 127.0.0.1:8765. Run it locally before starting.
+            Uses the Bundai ASR server via api.bundai.app/asr (proxied to bundai2 Pi).
           </p>
           <p className="text-xs text-gray-700 mb-3">
             ASR mode provides JP transcription + EN translation, normalized to one-line subtitle text.
