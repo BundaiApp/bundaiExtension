@@ -24,7 +24,8 @@ export function useSubtitle(videoId: string): UseSubtitleResult {
 
     try {
       // Fetch subtitles only in vtt format
-      const res = await fetch(`https://api.bundai.app/subtitles/${videoId}?subtitle_format=vtt`);
+      //const res = await fetch(`http://192.168.50.156:8088/subtitles?videoId=${videoId}&format=vtt`);
+			const res = await fetch(`https://api.bundai.app/asr/subtitles?videoId=${videoId}&format=vtt`);
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.detail || 'Failed to fetch subtitles.');

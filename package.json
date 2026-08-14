@@ -1,7 +1,7 @@
 {
   "name": "bundai: Learn Japanese With Anime",
   "displayName": "Bundai-Japanese Anime Dual Subtitle Loader",
-  "version": "2.5.13",
+  "version": "2.5.15",
   "description": "A Japanese language learning, chromium based web extension",
   "author": "bundai",
   "scripts": {
@@ -48,8 +48,9 @@
       "*://huggingface.co/*",
       "*://*.huggingface.co/*",
       "https://api.bundai.app/*",
-      "http://127.0.0.1/*",
-      "http://localhost/*"
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "http://192.168.50.156/*"
     ],
     "content_security_policy": {
       "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

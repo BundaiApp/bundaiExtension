@@ -765,9 +765,9 @@ class YouTubeSubtitleContainer {
       line-height: 1.4;
       min-height: 20px;
       display: none;
-      word-wrap: break-word;
-      white-space: pre-wrap;
-      max-width: 100%;
+      white-space: nowrap;
+      max-width: 90vw;
+      overflow: hidden;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
       cursor: default;
     `
@@ -838,19 +838,21 @@ class YouTubeSubtitleContainer {
   }
 
   private processSubtitleElement(element: HTMLDivElement, text: string): void {
+    const normalizedText = text.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim()
+
     if (
       !this.isJapaneseEnabled ||
       !this.isInitialized ||
-      !this.isJapaneseText(text)
+      !this.isJapaneseText(normalizedText)
     ) {
-      element.textContent = text
+      element.textContent = normalizedText
       return
     }
 
     const generation = ++this.subtitleGeneration
     this.tokenMatchCache.clear()
 
-    const tokens = this.tokenizeJapanese(text)
+    const tokens = this.tokenizeJapanese(normalizedText)
     if (tokens.length === 0) {
       element.textContent = text
       return

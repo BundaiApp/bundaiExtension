@@ -52,10 +52,7 @@ export class FlatFileDictionary {
 
   private async _initialize(): Promise<void> {
     try {
-      console.log("[FlatFileDictionary] Initializing...")
-
       await Promise.all([this.loadIndexFile(), this.loadDataFile()])
-
       console.log(`[FlatFileDictionary] Loaded ${this.indexCount} entries`)
     } catch (error) {
       console.error("[FlatFileDictionary] Failed to initialize:", error)
@@ -65,51 +62,25 @@ export class FlatFileDictionary {
 
   private async loadIndexFile(): Promise<void> {
     const url = chrome.runtime.getURL("assets/data/japanese/words.idx")
-    console.log("[FlatFileDictionary] Loading index from:", url)
     const response = await fetch(url)
-    console.log(
-      "[FlatFileDictionary] Index response:",
-      response.status,
-      response.statusText
-    )
+    if (!response.ok) throw new Error(`Index fetch failed: ${response.status}`)
     const buffer = await response.arrayBuffer()
-    console.log("[FlatFileDictionary] Index buffer size:", buffer.byteLength)
-
     const view = new DataView(buffer)
     this.indexCount = view.getUint32(0, true)
-    console.log("[FlatFileDictionary] Index count:", this.indexCount)
     this.indexData = new Uint32Array(buffer, 4, this.indexCount * 2)
-    console.log(
-      "[FlatFileDictionary] indexData length:",
-      this.indexData?.length
-    )
   }
 
   private async loadDataFile(): Promise<void> {
     const url = chrome.runtime.getURL("assets/data/japanese/words.ljson")
-    console.log("[FlatFileDictionary] Loading data from:", url)
     const response = await fetch(url)
-    console.log(
-      "[FlatFileDictionary] Data response:",
-      response.status,
-      response.statusText
-    )
+    if (!response.ok) throw new Error(`Data fetch failed: ${response.status}`)
     this.wordData = await response.arrayBuffer()
-    console.log(
-      "[FlatFileDictionary] Data buffer size:",
-      this.wordData.byteLength
-    )
   }
 
   private binarySearch(word: string): number {
     if (!this.indexData || this.indexCount === 0) {
-      console.log("[FlatFileDictionary] binarySearch: no index data")
       return -1
     }
-
-    console.log(
-      `[FlatFileDictionary] binarySearch for "${word}", range: 0-${this.indexCount}`
-    )
 
     let left = 0
     let right = this.indexCount - 1
@@ -123,12 +94,7 @@ export class FlatFileDictionary {
       const comparison =
         word === midWord ? 0 : word < midWord ? -1 : 1
 
-      console.log(
-        `[FlatFileDictionary] binarySearch mid=${mid}, offset=${offset}, length=${length}, midWord="${midWord}", comparison=${comparison}`
-      )
-
       if (comparison === 0) {
-        console.log(`[FlatFileDictionary] binarySearch: found at index ${mid}`)
         return mid
       } else if (comparison < 0) {
         right = mid - 1
@@ -137,7 +103,6 @@ export class FlatFileDictionary {
       }
     }
 
-    console.log(`[FlatFileDictionary] binarySearch: not found`)
     return -1
   }
 

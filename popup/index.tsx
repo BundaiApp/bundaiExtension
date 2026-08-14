@@ -13,6 +13,7 @@ import client from "~graphql"
 import { parseVTT, type SubtitleCue } from "~utils/subtitleParser"
 
 const BUNDAI_API_BASE_URL = "https://api.bundai.app"
+const SUBTITLE_SERVICE_URL = "http://192.168.50.156:8088"
 const LEGACY_LOCAL_ASR_BASE_URL = "https://api.bundai.app/asr"
 type SubtitleMode = "api" | "user" | "asr"
 type AsrJobState = "idle" | "queued" | "running" | "done" | "failed"
@@ -179,7 +180,7 @@ function MainPage({ onOpenTabs }) {
       console.log("[MainPage] Fetching subtitles for video:", videoId)
       console.log("[MainPage] Cookie header length:", cookieHeader?.length || 0)
 
-      const endpoint = `${BUNDAI_API_BASE_URL}/subtitles/${videoId}?subtitle_format=vtt`
+      const endpoint = `${SUBTITLE_SERVICE_URL}/subtitles?videoId=${videoId}&format=vtt`
       const response = await fetch(endpoint, {
         headers: {
           "X-Youtube-Cookies": cookieHeader

@@ -448,6 +448,20 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
     return `Format ${formatNum + 1}`
   }
 
+  const isJapaneseLang = (langCode: string) =>
+    langCode.toLowerCase().startsWith("ja")
+
+  // Track selection is fixed to Japanese. Track 2 is open to all languages,
+  // but English is listed first.
+  const japaneseEntries = Object.entries(subtitles).filter(([langCode]) =>
+    isJapaneseLang(langCode)
+  )
+  const track2Entries = Object.entries(subtitles).sort(([a], [b]) => {
+    const aIsEn = a.toLowerCase().startsWith("en") ? 0 : 1
+    const bIsEn = b.toLowerCase().startsWith("en") ? 0 : 1
+    return aIsEn - bIsEn
+  })
+
   return (
     <div className="mt-4">
       <h3 className="text-black font-bold">Available Subtitles</h3>
@@ -476,8 +490,8 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
                 value={selectedSubtitle1 || ""}
                 onChange={handleSubtitle1Change}
                 disabled={!!uploadedTrack1}>
-                <option value="">Select Subtitle</option>
-                {Object.entries(subtitles).map(([langCode, urls]) =>
+                <option value="">{japaneseEntries.length > 0 ? "Select Subtitle" : "No Japanese subtitles"}</option>
+                {japaneseEntries.map(([langCode, urls]) =>
                   urls.map((url, index) => (
                     <option key={`${langCode}-${index}`} value={url}>
                       {getLanguageName(langCode)} -{" "}
@@ -584,7 +598,7 @@ const SubtitlesSection: React.FC<SubtitlesSectionProps> = ({
                 onChange={handleSubtitle2Change}
                 disabled={!!uploadedTrack2}>
                 <option value="">Select Subtitle</option>
-                {Object.entries(subtitles).map(([langCode, urls]) =>
+                {track2Entries.map(([langCode, urls]) =>
                   urls.map((url, index) => (
                     <option key={`${langCode}-${index}`} value={url}>
                       {getLanguageName(langCode)} -{" "}
