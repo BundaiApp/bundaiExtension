@@ -66,7 +66,7 @@ A Chrome MV3 extension (Plasmo + React + TypeScript) for learning Japanese while
 - **GraphQL**: Apollo Client (auth, flashcards, user data)
 - **Backend**: Node.js 20 + Apollo Server + Express + Mongoose (MongoDB Atlas)
 - **Subtitle fetching**: yt-dlp (standalone, running on Pi 1 via `uv`-installed Python 3.12)
-- **ASR** (deferred): Qwen3-ASR-0.6B on Pi 2
+- **ASR**: Parakeet TDT ja int8 (default) / SenseVoice int8 on Pi 2 via sherpa-onnx, async job API with incremental results (working 2026-08-15; Qwen3-ASR deferred/broken)
 
 ---
 
@@ -76,7 +76,7 @@ A Chrome MV3 extension (Plasmo + React + TypeScript) for learning Japanese while
 |------|--------|-------------|
 | **API** | YouTube's own subtitles (manual + auto) | Popup → `GET api.bundai.app/subtitles/{videoId}?subtitle_format=vtt` → Pi 1 shells out to `yt-dlp --dump-json` → returns VTT URLs per language → user picks language → content script fetches the VTT URL directly from YouTube → parses + tokenizes |
 | **User** | User uploads .vtt/.srt/.ass file | Popup reads file → parses cues → sends to content script via `loadUserSubtitle` message |
-| **ASR** (deferred) | Local Qwen3-ASR model on Pi 2 | Popup → `GET api.bundai.app/asr/subtitles?videoId=X&model=Y` → Pi 1 proxies to Pi 2 → Qwen transcribes → returns JP/EN VTT |
+| **ASR** | Parakeet/SenseVoice on Pi 2 (sherpa-onnx) | Popup → `POST …/jobs/start` → poll `GET /jobs/status` → `GET /jobs/result` (partial or complete VTT); direct Pi 2 first, `api.bundai.app/asr` fallback |
 
 ### API mode flow (detailed)
 ```
@@ -501,15 +501,42 @@ Extension popup → HTTP GET /subtitles?videoId=X&model=tiny
   └── faster_whisper.WhisperModel("tiny"): translate → en.vtt
 ```
 
-### 12.5 Pi-based ASR (Qwen3-ASR — current, deferred)
+### 12.5 Pi-based ASR (Qwen3-ASR — abandoned)
 
 **When**: 2026-08-09
 
 - Pi 2 runs Qwen3-ASR-0.6B model in Python 3.12 venv
 - HTTP service on `:8088` with `GET /health`, `POST /transcribe`
-- Pi 1 (API server) offloads ASR work to Pi 2 via `BUNDAI_ASR_SERVICE_URL`
-- Cache/jobs/locks stay on Pi 1
-- Extension calls `api.bundai.app/asr/subtitles` → Pi 1 → Pi 2
+- **DEAD END (2026-08-15)**: torch 2.13 multi-threaded kernels SIGILL on Pi 4 (ARMv8.0 Cortex-A72 — same CPU-class issue as MongoDB 4.4.18). Single-threaded works but is far too slow (~hours per episode). Qwen path kept in code as fallback; do not use.
+
+### 12.6 sherpa-onnx on Pi 2 (current, WORKING)
+
+**When**: 2026-08-15
+
+- Pi 2 `~/sherpa_transcribe.py` + sherpa-onnx (pip, ONNX Runtime — no torch, no SIGILL)
+- **Default model: Parakeet TDT-CTC 0.6B ja int8** (`~/sherpa-models/sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8/`, 489MB) — best quality, punctuation included. RTF ~0.57 on Pi 4. IMPORTANT: must be fed ≤28s pieces (quality collapses on multi-minute single inputs — NeMo models are trained on short segments).
+- **Fast option: SenseVoice int8** (`~/sherpa-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/`, 163MB) — RTF ~0.30. Fails on ja↔en code-switching within one piece; fine for pure JP.
+- ReazonSpeech zipformer ja-en int8 also on disk (RTF 0.15, 2x fastest) — **unused**: byte-BPE token pieces are mojibake, can't build per-token cues. Future optimization.
+- `asr_service.py` rewritten (2026-08-15): `ThreadingHTTPServer` + async job API:
+  - `POST /jobs/start` `{videoId, model, cookieHeader}` → returns jobId instantly (or `cached:true` if final VTT exists; reuses running job for same video+model)
+  - `GET /jobs/status?jobId=` → status/progress/pieces/vttReady — each call fast, **Cloudflare-safe** (all requests <100s)
+  - `GET /jobs/result?videoId=&model=` (or `?jobId=`) → final VTT, or **partial** VTT while job runs (`complete:false`)
+  - `POST /transcribe` kept for compat (sync; `cachedOnly` probe)
+  - Incremental: pieces append to `~/asr_cache/transcribe_{videoId}_{model}.vtt.part`, atomically renamed to final on completion. Piece splitting hard-cuts continuous audio (no-silence spans) into ≤28s chunks.
+  - Cue hold: `extend_cues()` stretches each cue's end to the next cue's start (−0.05s; min 0.3s) — token timestamps alone are point-like and subtitles would flash for a split second. Applied server-side per piece AND popup-side (`extendAsrCues`) so old cached VTTs display correctly too.
+  - One ASR model in memory at a time (`MODEL_SEMAPHORE`); jobs dict in-memory (lost on restart — partial .part files discarded)
+- Public route works end-to-end: `api.bundai.app/asr/jobs/*` → Pi 3 (bundai-rs blind proxy) → Pi 2:8088 (verified with Sekiro PV + NHK weather video)
+- Extension popup (3.1.x): Start job → auto-polls status every 2.5s → **progress panel** (big % + bar + chunks done/total + cues on screen) → **chunks auto-push to the video as they finish** (no clicking; "Fetch Latest Chunks Now" is a manual backup). Opening the popup on a video with cached results re-pushes subtitles to the tab (survives page refresh). Local chrome.storage cache stores `complete` flag; partial never overwrites complete.
+- Content script fix (3.0.1): `loadAsrSubtitle` now force-enables + creates the subtitle container (page loads disabled in non-API modes; cues used to rot in `pendingAsrCues`)
+
+### Candidates evaluated (2026-08-15)
+| Option | Verdict |
+|--------|---------|
+| yamabiko-asr (Rust, Parakeet TDT ONNX) | Good arch (non-autoregressive); needs model conversion; Windows-focused. Backup plan. |
+| parakeet-rs (Rust bindings, incl. TDT multilingual + JP) | Similar to above; keep in mind if quality upgrade needed |
+| yamabiko-whisper / whisper.cpp | Streaming-mic oriented; Whisper tiny/base JP quality mediocre (already failed §12.4) |
+| VoiRS | It's TTS, not ASR — wrong direction |
+| Qwen3-ASR via torch | SIGILL / too slow (see 12.5) |
 
 ### What was removed from extension (cleanup)
 - `@huggingface/transformers` dependency (saved ~52 packages)
@@ -808,7 +835,7 @@ python3 scripts/build-dictionary.py
 ```
 
 ### Version tracking (IMPORTANT — read before every build)
-- Current extension version: **2.5.14** (stored in `package.json` `"version"` field).
+- Current extension version: **3.0.0** (stored in `package.json` `"version"` field).
 - **RULE: Before every rebuild, increment the version in `package.json` by +1** (e.g. 2.5.14 → 2.5.15). Never rebuild without bumping, and never leave the version unchanged between builds.
 - The user must be able to tell a new build apart by the version number (they check `chrome://extensions`).
 - After bumping, run `pnpm build` — the built `manifest.json` must show the new version.

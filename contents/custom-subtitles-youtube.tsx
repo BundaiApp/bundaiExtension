@@ -2321,6 +2321,12 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
 
       if (subtitleContainer) {
         const sc = subtitleContainer as any
+        if (!sc.isEnabled) {
+          sc.setEnabled(true)
+        }
+        if (!sc.subtitleContainer) {
+          sc.setupSubtitleContainer()
+        }
         if (sc.subtitle1Element && sc.subtitle2Element) {
           sc.subtitle1Data = cues
           sc.lastProcessedSubtitle1Text = ""

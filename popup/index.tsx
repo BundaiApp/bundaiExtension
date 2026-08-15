@@ -29,6 +29,9 @@ type AsrJobMeta = {
   status: Exclude<AsrJobState, "idle">
   updatedAt: number
   error?: string | null
+  progress?: number
+  donePieces?: number
+  totalPieces?: number
 }
 
 // Utility function to extract video ID from YouTube URLs
@@ -69,7 +72,7 @@ function MainPage({ onOpenTabs }) {
   // Subtitle mode: 'api' | 'user' | 'asr'
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("user")
   const [showRefreshMessage, setShowRefreshMessage] = useState(false)
-  const [asrModel, setAsrModel] = useState("small")
+  const [asrModel, setAsrModel] = useState("parakeet-ja")
   const [asrIncludeRomaji, setAsrIncludeRomaji] = useState(true)
   const [isGeneratingAsr, setIsGeneratingAsr] = useState(false)
   const [isCheckingAsrJob, setIsCheckingAsrJob] = useState(false)
@@ -78,6 +81,9 @@ function MainPage({ onOpenTabs }) {
   const [asrStatus, setAsrStatus] = useState("")
   const [asrError, setAsrError] = useState<string | null>(null)
   const [asrJobMeta, setAsrJobMeta] = useState<AsrJobMeta | null>(null)
+  const lastLoadedCueCountRef = useRef(0)
+  const asrAutoRefreshLockRef = useRef(false)
+  const [asrLoadedCueCount, setAsrLoadedCueCount] = useState(0)
 
   // WordCard styles state
   const [wordCardStyles, setWordCardStyles] = useState({
@@ -690,6 +696,22 @@ function MainPage({ onOpenTabs }) {
     }))
   }
 
+  // ASR token timestamps give point-like cue ends (subtitles would flash for
+  // a split second). Hold each cue on screen until the next one starts.
+  const extendAsrCues = (cues: SubtitleCue[]): SubtitleCue[] => {
+    const sorted = [...cues].sort((a, b) => a.start - b.start)
+    return sorted.map((cue, i) => {
+      const nextStart = i + 1 < sorted.length ? sorted[i + 1].start : null
+      let end = cue.end
+      if (nextStart != null) {
+        end = Math.max(end, nextStart - 0.05)
+      } else {
+        end = Math.max(end, cue.start + 1.0)
+      }
+      return { ...cue, end: Math.max(end, cue.start + 0.3) }
+    })
+  }
+
   const splitJapaneseTextIntoPhrases = (text: string): string[] => {
     const normalized = normalizeCueTextToSingleLine(text)
     if (!normalized) return []
@@ -797,6 +819,7 @@ function MainPage({ onOpenTabs }) {
     }
 
     const candidates: AsrBackend[] = [
+      { baseUrl: SUBTITLE_SERVICE_URL, kind: "legacy" },
       { baseUrl: LEGACY_LOCAL_ASR_BASE_URL, kind: "legacy" }
     ]
 
@@ -817,17 +840,118 @@ function MainPage({ onOpenTabs }) {
     }
 
     throw new Error(
-      "ASR server is not reachable. Make sure the API server at api.bundai.app is online."
+      "ASR server is not reachable. Make sure the Pi ASR service (192.168.50.156:8088) or api.bundai.app is online."
     )
   }
 
-  const normalizeLegacyAsrModel = (model: string): string => {
-    const whisperModels = new Set(["base", "small"])
-    return whisperModels.has(model) ? model : "base"
+  type AsrJobInfo = {
+    jobId: string | null
+    status: "queued" | "downloading" | "transcribing" | "done" | "failed"
+    progress: number
+    donePieces: number
+    totalPieces: number
+    vttReady: boolean
+    error?: string | null
   }
 
-  const isLegacyWhisperModel = (model: string): boolean => {
-    return normalizeLegacyAsrModel(model) === model
+  const asrJobsStart = async (
+    backend: AsrBackend,
+    videoId: string,
+    model: string,
+    cookieHeader: string
+  ): Promise<{ cached: boolean; job: AsrJobInfo }> => {
+    const response = await fetchWithTimeout(
+      `${backend.baseUrl}/jobs/start`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId, model, cookieHeader })
+      },
+      20000
+    )
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(errorText || `Failed to start ASR job (HTTP ${response.status})`)
+    }
+    const payload = await response.json()
+    if (payload.cached) {
+      return {
+        cached: true,
+        job: {
+          jobId: null,
+          status: "done",
+          progress: 1,
+          donePieces: 1,
+          totalPieces: 1,
+          vttReady: true
+        }
+      }
+    }
+    return {
+      cached: false,
+      job: {
+        jobId: String(payload.jobId || ""),
+        status: (payload.status as AsrJobInfo["status"]) || "queued",
+        progress: Number(payload.progress || 0),
+        donePieces: Number(payload.donePieces || 0),
+        totalPieces: Number(payload.totalPieces || 0),
+        vttReady: !!payload.vttReady,
+        error: payload.error || null
+      }
+    }
+  }
+
+  const asrJobsStatus = async (
+    backend: AsrBackend,
+    jobId: string
+  ): Promise<AsrJobInfo> => {
+    const response = await fetchWithTimeout(
+      `${backend.baseUrl}/jobs/status?jobId=${encodeURIComponent(jobId)}`,
+      undefined,
+      10000
+    )
+    if (!response.ok) {
+      throw new Error(`Failed to check ASR job status (HTTP ${response.status})`)
+    }
+    const payload = await response.json()
+    return {
+      jobId: String(payload.jobId || jobId),
+      status: (payload.status as AsrJobInfo["status"]) || "queued",
+      progress: Number(payload.progress || 0),
+      donePieces: Number(payload.donePieces || 0),
+      totalPieces: Number(payload.totalPieces || 0),
+      vttReady: !!payload.vttReady,
+      error: payload.error || null
+    }
+  }
+
+  const asrJobsResult = async (
+    backend: AsrBackend,
+    videoId: string,
+    model: string
+  ): Promise<{ jaVtt: string; complete: boolean; progress: number }> => {
+    const response = await fetchWithTimeout(
+      `${backend.baseUrl}/jobs/result?videoId=${encodeURIComponent(videoId)}&model=${encodeURIComponent(model)}`,
+      undefined,
+      30000
+    )
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error("not_ready")
+      }
+      const errorText = await response.text()
+      throw new Error(errorText || `Failed to fetch ASR result (HTTP ${response.status})`)
+    }
+    const payload = await response.json()
+    const jaVtt = typeof payload.jaVtt === "string" ? payload.jaVtt : ""
+    if (!jaVtt.trim()) {
+      throw new Error("not_ready")
+    }
+    return {
+      jaVtt,
+      complete: payload.complete !== false,
+      progress: Number(payload.progress || 0)
+    }
   }
 
   const getCurrentPlaybackStateFromContentScript = async (): Promise<{
@@ -902,9 +1026,6 @@ function MainPage({ onOpenTabs }) {
       typeof stored.model === "string" &&
       typeof stored.status === "string"
     ) {
-      if (!isLegacyWhisperModel(stored.model)) {
-        return null
-      }
       return {
         jobId: stored.jobId,
         videoId: stored.videoId,
@@ -939,38 +1060,17 @@ function MainPage({ onOpenTabs }) {
       }
     }
 
-    const backend = await resolveAsrBackend()
-    if (backend.kind !== "jobs") {
+    try {
+      const backend = await resolveAsrBackend()
+      const { jaVtt } = await asrJobsResult(backend, videoId, model)
+      const cachedJaCount = parseVTT(jaVtt).length
+      return {
+        ready: cachedJaCount > 0,
+        jaCueCount: cachedJaCount,
+        enCueCount: 0
+      }
+    } catch {
       return { ready: false, jaCueCount: 0, enCueCount: 0 }
-    }
-
-    const cachedQuery = new URLSearchParams({
-      videoId,
-      model,
-      cachedOnly: "1"
-    })
-    const cachedResponse = await fetchWithTimeout(
-      `${backend.baseUrl}/subtitles?${cachedQuery.toString()}`,
-      undefined,
-      5000
-    )
-
-    if (!cachedResponse.ok) {
-      return { ready: false, jaCueCount: 0, enCueCount: 0 }
-    }
-
-    const cachedPayload = await cachedResponse.json()
-    const cachedJaVtt =
-      typeof cachedPayload.jaVtt === "string" ? cachedPayload.jaVtt : ""
-    const cachedEnVtt =
-      typeof cachedPayload.enVtt === "string" ? cachedPayload.enVtt : ""
-    const cachedJaCount = parseVTT(cachedJaVtt).length
-    const cachedEnCount = parseVTT(cachedEnVtt).length
-
-    return {
-      ready: cachedJaCount > 0,
-      jaCueCount: cachedJaCount,
-      enCueCount: cachedEnCount
     }
   }
 
@@ -995,63 +1095,43 @@ function MainPage({ onOpenTabs }) {
 
     try {
       const backend = await resolveAsrBackend(true)
-
-      const query = new URLSearchParams({
-        videoId: currentVideoId,
-        model: normalizeLegacyAsrModel(asrModel)
-      })
+      const cookieHeader = await getYouTubeCookieHeader()
 
       setAsrStatus(
-        `Generating subtitles with local Whisper (${query.get("model")})...`
+        `Starting ASR job (${asrModel}) on the Pi...`
       )
 
-      const response = await fetchWithTimeout(
-        `${backend.baseUrl}/subtitles?${query.toString()}`,
-        {},
-        10 * 60 * 1000
+      const { cached, job } = await asrJobsStart(
+        backend,
+        currentVideoId,
+        asrModel,
+        cookieHeader
       )
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(
-          errorText || `Local ASR generation failed (${response.status})`
-        )
-      }
 
-      const payload = await response.json()
-      const jaVtt = typeof payload.jaVtt === "string" ? payload.jaVtt : ""
-      const enVtt = typeof payload.enVtt === "string" ? payload.enVtt : ""
-      const jaCues = normalizeCuesToSingleLine(parseVTT(jaVtt))
-      const enCues = normalizeCuesToSingleLine(parseVTT(enVtt))
-      if (jaCues.length === 0) {
-        throw new Error("Local ASR generated empty subtitles.")
-      }
-
-      const modelUsed = String(payload.model || query.get("model") || "base")
-      await chrome.storage.local.set({
-        [asrSubtitleStorageKey(currentVideoId)]: {
-          videoId: currentVideoId,
-          model: modelUsed,
-          generatedAt: Date.now(),
-          jaVtt,
-          enVtt,
-          jaCues,
-          enCues
-        }
-      })
+      lastLoadedCueCountRef.current = 0
+      setAsrLoadedCueCount(0)
 
       const nextMeta: AsrJobMeta = {
-        jobId: `legacy-${Date.now()}`,
+        jobId: job.jobId || `job-${Date.now()}`,
         videoId: currentVideoId,
-        model: modelUsed,
-        status: "done",
+        model: asrModel,
+        status: cached ? "done" : "running",
         updatedAt: Date.now(),
-        error: null
+        error: null,
+        progress: job.progress,
+        donePieces: job.donePieces,
+        totalPieces: job.totalPieces
       }
       await saveAsrJobMeta(currentVideoId, nextMeta)
-      setAsrOutputReady(true)
-      setAsrStatus(
-        `Local ASR generation complete: ja=${jaCues.length}, en=${enCues.length}. Click "Load Generated JP".`
-      )
+
+      if (cached) {
+        setAsrOutputReady(true)
+        setAsrStatus("Result already cached on the Pi. Click \"Load Generated JP\".")
+      } else if (job.status === "failed") {
+        throw new Error(job.error || "ASR job failed to start.")
+      } else {
+        setAsrStatus("Job started — downloading audio on the Pi...")
+      }
     } catch (error: any) {
       console.error("[MainPage] ASR generation error:", error)
       setAsrError(error?.message || "Failed to start local ASR job.")
@@ -1061,13 +1141,70 @@ function MainPage({ onOpenTabs }) {
     }
   }
 
+  // Fetch latest result; if it has more cues than what's on screen, push the
+  // update to the content script automatically. Returns cue count loaded.
+  const autoRefreshAsrChunks = async (
+    modelOverride?: string
+  ): Promise<number> => {
+    if (!currentVideoId) return 0
+    if (asrAutoRefreshLockRef.current) return lastLoadedCueCountRef.current
+    asrAutoRefreshLockRef.current = true
+    try {
+      const modelToLoad = modelOverride || asrJobMeta?.model || asrModel
+      const backend = await resolveAsrBackend()
+      const result = await asrJobsResult(backend, currentVideoId, modelToLoad)
+      const jaCues = extendAsrCues(
+        normalizeCuesToSingleLine(parseVTT(result.jaVtt))
+      )
+      if (jaCues.length <= lastLoadedCueCountRef.current) {
+        return lastLoadedCueCountRef.current
+      }
+      const prevCount = lastLoadedCueCountRef.current
+      lastLoadedCueCountRef.current = jaCues.length
+      setAsrLoadedCueCount(jaCues.length)
+
+      await chrome.storage.local.set({
+        [asrSubtitleStorageKey(currentVideoId)]: {
+          videoId: currentVideoId,
+          model: modelToLoad,
+          generatedAt: Date.now(),
+          jaVtt: result.jaVtt,
+          enVtt: "",
+          jaCues,
+          enCues: [],
+          complete: result.complete
+        }
+      })
+      await sendAsrCuesToContentScript(
+        jaCues,
+        [],
+        asrIncludeRomaji,
+        currentVideoId
+      )
+      setAsrOutputReady(true)
+      setAsrStatus(
+        result.complete
+          ? `Final subtitles loaded: ${jaCues.length} cues.`
+          : `Auto-loaded +${jaCues.length - prevCount} cues (${jaCues.length} total).`
+      )
+      return jaCues.length
+    } catch (error: any) {
+      const msg = String(error?.message || error || "")
+      if (msg !== "not_ready") {
+        console.error("[MainPage] ASR auto refresh error:", error)
+      }
+      return lastLoadedCueCountRef.current
+    } finally {
+      asrAutoRefreshLockRef.current = false
+    }
+  }
+
   const checkAsrJobStatus = async () => {
     if (!currentVideoId) return
     if (isCheckingAsrJob) return
 
     let releaseCheckingGuard: number | null = null
     setIsCheckingAsrJob(true)
-    setAsrError(null)
     releaseCheckingGuard = window.setTimeout(() => {
       setIsCheckingAsrJob(false)
     }, 30000)
@@ -1078,58 +1215,77 @@ function MainPage({ onOpenTabs }) {
         meta = await loadStoredAsrJobMeta(currentVideoId)
       }
 
-      if (!meta) {
-        const latestQuery = new URLSearchParams({
-          videoId: currentVideoId,
-          model: asrModel
-        })
-        const backend = await resolveAsrBackend()
-        if (backend.kind !== "jobs") {
+      const isLegacyJob =
+        !meta || !meta.jobId || meta.jobId.startsWith("legacy-")
+      if (isLegacyJob) {
+        // legacy or missing job — fall back to cache probe
+        const cached = await getCachedAsrOutputSummary(currentVideoId, meta?.model || asrModel)
+        if (!cached.ready) {
           throw new Error("No ASR job found for this video. Start a job first.")
         }
-        const latestResponse = await fetchWithTimeout(
-          `${backend.baseUrl}/jobs/latest?${latestQuery.toString()}`
-        )
-        if (latestResponse.ok) {
-          const latestPayload = await latestResponse.json()
-          if (latestPayload?.job?.jobId) {
-            meta = {
-              jobId: String(latestPayload.job.jobId),
-              videoId: currentVideoId,
-              model: String(latestPayload.job.model || asrModel),
-              status: coerceAsrJobStatus(
-                String(latestPayload.job.status || "queued")
-              ),
-              updatedAt: Date.now(),
-              error: latestPayload.job.error || null
-            }
-          }
-        }
-      }
-
-      if (!meta) {
-        throw new Error("No ASR job found for this video. Start a job first.")
-      }
-
-      if (meta.jobId.startsWith("legacy-")) {
-        const cached = await getCachedAsrOutputSummary(currentVideoId, meta.model)
-        if (!cached.ready) {
-          throw new Error("No cached local ASR output found. Start a job first.")
-        }
         await saveAsrJobMeta(currentVideoId, {
-          ...meta,
+          ...(meta as AsrJobMeta),
+          videoId: currentVideoId,
+          model: meta?.model || asrModel,
+          jobId: meta?.jobId || `job-${Date.now()}`,
           status: "done",
           updatedAt: Date.now(),
           error: null
         })
         setAsrOutputReady(true)
         setAsrStatus(
-          `Local ASR output is available: ja=${cached.jaCueCount}, en=${cached.enCueCount}. Click "Load Generated JP".`
+          `ASR output is available: ${cached.jaCueCount} cues. Click "Load Generated JP".`
         )
         return
       }
 
-      throw new Error("No cached local ASR output found. Start Local ASR first.")
+      const backend = await resolveAsrBackend()
+      const info = await asrJobsStatus(backend, meta.jobId)
+
+      if (info.status === "failed") {
+        await saveAsrJobMeta(currentVideoId, {
+          ...meta,
+          status: "failed",
+          updatedAt: Date.now(),
+          error: info.error || "ASR job failed."
+        })
+        setAsrError(info.error || "ASR job failed.")
+        setAsrStatus("")
+        return
+      }
+
+      const pct = Math.round((info.progress || 0) * 100)
+      const piecesText =
+        info.totalPieces > 0 ? ` (${info.donePieces}/${info.totalPieces})` : ""
+      await saveAsrJobMeta(currentVideoId, {
+        ...meta,
+        status: info.status === "done" ? "done" : "running",
+        updatedAt: Date.now(),
+        error: null,
+        progress: info.progress,
+        donePieces: info.donePieces,
+        totalPieces: info.totalPieces
+      })
+
+      if (info.status === "done") {
+        setAsrOutputReady(true)
+        const loaded = await autoRefreshAsrChunks(meta.model)
+        setAsrStatus(
+          loaded > 0
+            ? `ASR complete — ${loaded} cues on screen.`
+            : "ASR complete. Click \"Load Generated JP\"."
+        )
+      } else if (info.vttReady) {
+        setAsrOutputReady(true)
+        const loaded = await autoRefreshAsrChunks(meta.model)
+        setAsrStatus(
+          `Transcribing... ${pct}% — auto-loading (${loaded} cues on screen)`
+        )
+      } else {
+        setAsrStatus(
+          `${info.status === "downloading" ? "Downloading audio" : "Transcribing"}... ${pct}%${piecesText}`
+        )
+      }
     } catch (error: any) {
       console.error("[MainPage] ASR status error:", error)
       setAsrError(error?.message || "Failed to check ASR job status.")
@@ -1152,61 +1308,43 @@ function MainPage({ onOpenTabs }) {
     try {
       const modelToLoad = asrJobMeta?.model || asrModel
       let jaVtt = ""
-      let enVtt = ""
+      let complete = true
       let jaCues: SubtitleCue[] = []
-      let enCues: SubtitleCue[] = []
+      const enCues: SubtitleCue[] = []
 
       const localCachedResult = await chrome.storage.local.get([
         asrSubtitleStorageKey(currentVideoId)
       ])
       const localCached = localCachedResult[asrSubtitleStorageKey(currentVideoId)]
-      if (typeof localCached?.jaVtt === "string") {
+      if (
+        typeof localCached?.jaVtt === "string" &&
+        localCached.model === modelToLoad &&
+        localCached.complete !== false
+      ) {
         jaVtt = localCached.jaVtt
-        jaCues = normalizeCuesToSingleLine(
-          Array.isArray(localCached.jaCues)
-            ? localCached.jaCues
-            : parseVTT(localCached.jaVtt)
-        )
-        if (typeof localCached.enVtt === "string") {
-          enVtt = localCached.enVtt
-          enCues = normalizeCuesToSingleLine(
-            Array.isArray(localCached.enCues)
-              ? localCached.enCues
-              : parseVTT(localCached.enVtt)
+        jaCues = extendAsrCues(
+          normalizeCuesToSingleLine(
+            Array.isArray(localCached.jaCues)
+              ? localCached.jaCues
+              : parseVTT(localCached.jaVtt)
           )
-        }
+        )
       }
 
       if (jaCues.length === 0) {
         const backend = await resolveAsrBackend()
-
-        const query = new URLSearchParams({
-          videoId: currentVideoId,
-          model: modelToLoad,
-          force: "0"
-        })
-
-        const response = await fetchWithTimeout(
-          `${backend.baseUrl}/subtitles?${query.toString()}`
-        )
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(
-            errorText ||
-              "Generated subtitles are not ready yet. Check status and try again."
-          )
-        }
-
-        const payload = await response.json()
-        jaVtt = typeof payload.jaVtt === "string" ? payload.jaVtt : ""
-        enVtt = typeof payload.enVtt === "string" ? payload.enVtt : ""
-        jaCues = normalizeCuesToSingleLine(parseVTT(jaVtt))
-        enCues = normalizeCuesToSingleLine(parseVTT(enVtt))
+        const result = await asrJobsResult(backend, currentVideoId, modelToLoad)
+        jaVtt = result.jaVtt
+        complete = result.complete
+        jaCues = extendAsrCues(normalizeCuesToSingleLine(parseVTT(jaVtt)))
       }
 
       if (jaCues.length === 0) {
-        throw new Error("Cached ASR output is empty.")
+        throw new Error("ASR output is empty or not ready yet.")
       }
+
+      lastLoadedCueCountRef.current = jaCues.length
+      setAsrLoadedCueCount(jaCues.length)
 
       await chrome.storage.local.set({
         [asrSubtitleStorageKey(currentVideoId)]: {
@@ -1214,9 +1352,10 @@ function MainPage({ onOpenTabs }) {
           model: modelToLoad,
           generatedAt: Date.now(),
           jaVtt,
-          enVtt,
+          enVtt: "",
           jaCues,
-          enCues
+          enCues,
+          complete
         }
       })
 
@@ -1250,10 +1389,14 @@ function MainPage({ onOpenTabs }) {
     if (!currentVideoId) {
       setAsrJobMeta(null)
       setAsrOutputReady(false)
+      setAsrLoadedCueCount(0)
+      lastLoadedCueCountRef.current = 0
       return
     }
 
     let cancelled = false
+    lastLoadedCueCountRef.current = 0
+    setAsrLoadedCueCount(0)
 
     const hydrateAsrJobState = async () => {
       try {
@@ -1267,6 +1410,14 @@ function MainPage({ onOpenTabs }) {
         if (cancelled) return
 
         setAsrOutputReady(cached.ready)
+        setAsrLoadedCueCount(cached.ready ? cached.jaCueCount : 0)
+        lastLoadedCueCountRef.current = 0
+
+        // If subtitles already exist (job done earlier), push them to the
+        // tab again — the page may have been refreshed since.
+        if (cached.ready && subtitleMode === "asr" && !cancelled) {
+          await autoRefreshAsrChunks(modelToCheck)
+        }
 
         if (
           cached.ready &&
@@ -1336,7 +1487,8 @@ function MainPage({ onOpenTabs }) {
   const canStartAsrJob = !!currentVideoId && !isAsrBusy && !isAsrJobRunning
   const canLoadGeneratedAsr =
     !!currentVideoId &&
-    !isAsrBusy &&
+    !isGeneratingAsr &&
+    !isLoadingAsr &&
     (asrOutputReady || (hasAsrJobForCurrentVideo && asrJobState === "done"))
 
   return (
@@ -1551,6 +1703,20 @@ function MainPage({ onOpenTabs }) {
                 </label>
                 <p className="text-xs text-gray-600 ml-6">
                   Fetch from Bundai API
+                </p>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="subtitleMode"
+                    checked={subtitleMode === "asr"}
+                    onChange={() => handleSubtitleModeChange("asr")}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm font-medium">ASR Subtitles</span>
+                </label>
+                <p className="text-xs text-gray-600 ml-6">
+                  Generate with Qwen3-ASR on the Pi
                 </p>
               </>
             )}
@@ -1785,14 +1951,14 @@ function MainPage({ onOpenTabs }) {
             </div>
           )}
         </div>
-      ) : false ? (
+      ) : enabled && isYouTubePage && currentVideoId && subtitleMode === "asr" ? (
         <div className="mt-4 bg-white bg-opacity-50 p-3 rounded border-2 border-black">
           <h3 className="text-black font-bold mb-2">Generate Subtitles (ASR)</h3>
           <p className="text-xs text-gray-700 mb-3">
-            Uses the Bundai ASR server via api.bundai.app/asr (proxied to bundai2 Pi).
+            Runs a background transcription job on the bundai2 Pi (direct LAN, falls back to api.bundai.app/asr). Safe to close the popup.
           </p>
           <p className="text-xs text-gray-700 mb-3">
-            ASR mode provides JP transcription + EN translation, normalized to one-line subtitle text.
+            ASR mode provides JP transcription, normalized to one-line subtitle text. Roughly real-time speed on the Pi; results are cached per video.
           </p>
 
           <div className="mb-3">
@@ -1801,8 +1967,8 @@ function MainPage({ onOpenTabs }) {
               value={asrModel}
               onChange={(e) => setAsrModel(e.target.value)}
               className="w-full px-2 py-1 rounded border border-black text-sm bg-white">
-              <option value="base">Whisper base (141 MB)</option>
-              <option value="small">Whisper small (464 MB)</option>
+              <option value="parakeet-ja">Parakeet TDT 0.6B JP (best quality)</option>
+              <option value="sensevoice-ja">SenseVoice JP (2x faster)</option>
             </select>
           </div>
 
@@ -1833,17 +1999,48 @@ function MainPage({ onOpenTabs }) {
           {asrError && <p className="text-xs text-red-700 mb-2">{asrError}</p>}
           {asrStatus && <p className="text-xs text-green-700 mb-2">{asrStatus}</p>}
 
+          {/* Progress panel */}
           {asrJobMeta && asrJobMeta.videoId === currentVideoId && (
-            <div className="text-xs text-gray-800 bg-yellow-100 border border-yellow-300 rounded p-2 mb-2">
-              <div>
-                <span className="font-semibold">Job:</span> {asrJobMeta.jobId}
+            <div className="mb-2 bg-white border-2 border-black rounded p-2">
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs font-bold uppercase tracking-wide">
+                  {asrJobState === "running"
+                    ? asrStatus?.startsWith("Downloading")
+                      ? "Downloading audio"
+                      : "Transcribing"
+                    : asrJobState}
+                </span>
+                <span className="text-lg font-extrabold leading-none">
+                  {Math.round((asrJobMeta.progress || 0) * 100)}%
+                </span>
               </div>
-              <div>
-                <span className="font-semibold">Status:</span> {asrJobMeta.status}
+              <div className="w-full h-3 bg-gray-300 rounded-full overflow-hidden my-1 border border-gray-400">
+                <div
+                  className="h-full bg-green-600 transition-all duration-500"
+                  style={{
+                    width: `${Math.round((asrJobMeta.progress || 0) * 100)}%`
+                  }}
+                />
               </div>
-              <div>
-                <span className="font-semibold">Model:</span> {asrJobMeta.model}
+              <div className="flex justify-between text-xs text-gray-800">
+                <span className="font-semibold">
+                  Chunks: {asrJobMeta.donePieces ?? 0}/
+                  {asrJobMeta.totalPieces || "?"}
+                </span>
+                <span>{asrLoadedCueCount} cues on screen</span>
               </div>
+              {isAsrJobRunning && (
+                <div className="text-xs font-semibold text-green-700 mt-1">
+                  {asrLoadedCueCount > 0
+                    ? "Auto-loading new chunks — keep watching"
+                    : "Chunks appear automatically once ready"}
+                </div>
+              )}
+              {asrJobMeta.error && (
+                <div className="text-xs text-red-700 mt-1 font-semibold">
+                  {asrJobMeta.error}
+                </div>
+              )}
             </div>
           )}
 
@@ -1864,39 +2061,17 @@ function MainPage({ onOpenTabs }) {
             className="w-full mt-2 px-3 py-2 bg-green-600 text-white rounded font-semibold hover:bg-green-700 disabled:bg-gray-400">
             {isLoadingAsr
               ? "Loading..."
-              : canLoadGeneratedAsr
-                ? asrIncludeRomaji
-                  ? "Load Generated JP + Romaji"
-                  : "Load Generated JP"
-                : asrIncludeRomaji
-                  ? "Load JP + Romaji (Not Ready)"
-                  : "Load JP (Not Ready)"}
+              : isAsrJobRunning
+                ? "Fetch Latest Chunks Now"
+                : asrLoadedCueCount > 0
+                  ? "Reload Subtitles"
+                  : "Load Generated JP"}
           </button>
 
-          <p className="text-xs text-gray-600 mt-2">
-            First run can take time because audio download + ASR happens on your machine.
-          </p>
-          <p className="text-xs text-gray-700 mt-1">
-            Job state:{" "}
-            <span className="font-semibold">
-              {hasAsrJobForCurrentVideo ? asrJobState : "idle"}
-            </span>
-            {" | "}
-            Output:{" "}
-            <span className="font-semibold">
-              {asrOutputReady ? "ready" : "not ready"}
-            </span>
-            {" | "}
-            Status check:{" "}
-            <span className="font-semibold">
-              {isCheckingAsrJob ? "auto-checking" : "auto"}
-            </span>
-          </p>
-          <p className="text-xs text-green-800 mt-2">
-            After you start a job, it runs on the local server in the background. You can close the popup and come back later.
-          </p>
-          <p className="text-xs text-gray-600 mt-1">
-            Flow: Start job -> wait for auto status -> Load generated subtitles.
+          <p className="text-xs text-green-800 mt-2 font-medium">
+            {isAsrJobRunning
+              ? "New chunks are pushed to the video automatically — no clicking needed. (Manual fetch is a backup.)"
+              : "You can close this popup — the job keeps running on the Pi. Finished results are cached forever."}
           </p>
         </div>
       ) : enabled && subtitleMode === "user" ? (
